@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import warnings
 from pathlib import Path
@@ -26,218 +25,21 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
+from load_common import (
+    clean_inner_quotes,
+    get_db_config,
+    norm_spaces,
+    pick_file_dialog_desktop,
+    resolve_user_path,
+    standardize_school_name,
+    strip_outer_quotes,
+)
 
-try:
-    from dotenv import load_dotenv
-except Exception:
-    load_dotenv = None
 
-
-# Эти предупреждения openpyxl обычно не мешают работе, но засоряют вывод
 warnings.filterwarnings("ignore", message=r"Print area cannot be set.*", category=UserWarning, module="openpyxl")
 
 
-# -------------------- Базовые утилиты --------------------
-
-def norm_spaces(s: str) -> str:
-    s = str(s).replace("\u00A0", " ")
-    return re.sub(r"\s+", " ", s.strip())
-
-
-def clean_inner_quotes(s: str) -> str:
-    return str(s).replace("«", "").replace("»", "").replace('"', "").replace("'", "")
-
-
-def strip_outer_quotes(s: str) -> str:
-    s = str(s).strip()
-    while True:
-        changed = False
-        for a, b in [('"', '"'), ("'", "'"), ("«", "»")]:
-            if len(s) >= 2 and s.startswith(a) and s.endswith(b):
-                s = s[1:-1].strip()
-                changed = True
-                break
-        if not changed:
-            break
-    return s.strip().strip('"').strip("'").strip("«").strip("»").strip()
-
-
-# -------------------- Нормализация школ --------------------
-import re
-from typing import List, Tuple
-
-# скобки убираем, текст внутри сохраняем
-_PARENS_RE = re.compile(r"\(([^)]*)\)")
-
-# убираем лидирующий "138049 - "
-_LEADING_NUM_RE = re.compile(r"^\s*\d+\s*[-–—]\s*")
-
-# разные тире приводим к "-"
-_DASHES_RE = re.compile(r"[–—]")
-
-# склеенные слова: "...краяМБОУ..." -> "...края МБОУ..."
-_GLUE_RE = re.compile(r"(?<=[а-яё])(?=[А-ЯЁ])")
-
-# точка между буквами: "АП.Светогорова" -> "АПСветогорова"
-_DOT_BETWEEN_LETTERS_RE = re.compile(r"(?<=[A-Za-zА-Яа-яЁё])\.(?=[A-Za-zА-Яа-яЁё])")
-
-# точки после заглавной буквы в конце токена: "ВД." -> "ВД"
-_DOT_AFTER_CAP_RE = re.compile(r"(?<=[A-ZА-ЯЁ])\.(?=\s|$)")
-
-# хвост "имени ..." / "им ..." – для схлопывания дублей
-_HONORIFIC_RE = re.compile(r"\bИМ(?:ЕНИ)?\b.*$", flags=re.IGNORECASE)
-
-
-def norm_spaces(s: str) -> str:
-    s = str(s).replace("\u00A0", " ")
-    return re.sub(r"\s+", " ", s.strip())
-
-
-def clean_inner_quotes(s: str) -> str:
-    return str(s).replace("«", "").replace("»", "").replace('"', "").replace("'", "")
-
-
-def strip_outer_quotes(s: str) -> str:
-    s = str(s).strip()
-    while True:
-        changed = False
-        for a, b in [('"', '"'), ("'", "'"), ("«", "»")]:
-            if len(s) >= 2 and s.startswith(a) and s.endswith(b):
-                s = s[1:-1].strip()
-                changed = True
-                break
-        if not changed:
-            break
-    return s.strip().strip('"').strip("'").strip("«").strip("»").strip()
-
-
-def remove_parens_keep_text(s: str) -> str:
-    return _PARENS_RE.sub(lambda m: f" {m.group(1)} ", s)
-
-
-def strip_leading_num_prefix(s: str) -> str:
-    return _LEADING_NUM_RE.sub("", s).strip()
-
-
-SCHOOL_REPLACEMENTS: List[Tuple[str, str]] = [
-    # Организационно-правовая форма
-    (r"\bФедеральн\w*\s+государственн\w*\s+каз[её]нн\w*\s+общеобразовательн\w*\s+учрежден\w*\b", "ФГКОУ"),
-    (r"\bКраев\w*\s+государственн\w*\s+автономн\w*\s+нетипов\w*\s+образовательн\w*\s+учрежден\w*\b", "КГАНОУ"),
-    (r"\bКраев\w*\s+государственн\w*\s+бюджетн\w*\s+общеобразовательн\w*\s+учрежден\w*\b", "КГБОУ"),
-    (r"\bМуниципальн\w*\s+автономн\w*\s+общеобразовательн\w*\s+учрежден\w*\b", "МАОУ"),
-    (r"\bМуниципальн\w*\s+бюджетн\w*\s+общеобразовательн\w*\s+учрежден\w*\b", "МБОУ"),
-    (r"\bМуниципальн\w*\s+каз[её]нн\w*\s+общеобразовательн\w*\s+учрежден\w*\b", "МКОУ"),
-    (r"\bМуниципальн\w*\s+общеобразовательн\w*\s+учрежден\w*\b", "МОУ"),
-    (r"\bЧастн\w*\s+общеобразовательн\w*\s+учрежден\w*\b", "ЧОУ"),
-
-    # Тип учреждения
-    (r"\bсредн\w*\s+общеобразовательн\w*\s+школ\w*\b", "СОШ"),
-    (r"\bобщеобразовательн\w*\s+школ\w*\b", "ОШ"),
-    (r"\bсредн\w*\s+школ\w*\b", "СШ"),
-    (r"\bвечерн\w*\s*\(сменн\w*\)\s*школ\w*\b", "ВСШ"),
-    (r"\bшкола[-\s]?интернат\b", "ШКОЛА-ИНТЕРНАТ"),
-    (r"\bгимназ\w*\b", "ГИМНАЗИЯ"),
-    (r"\bлице\w*\b", "ЛИЦЕЙ"),
-    (r"\bцентр\s+образован\w*\b", "ЦЕНТР ОБРАЗОВАНИЯ"),
-    (r"\bкадетск\w*\s+школ\w*\b", "КАДЕТСКАЯ ШКОЛА"),
-]
-
-# унификация "поселок/поселка" -> "пос", "село/села" -> "с", "город" -> "г"
-LOCATION_REPLACEMENTS: List[Tuple[str, str]] = [
-    (r"\bпос[её]л[её]к(?:а)?\b", "пос"),
-    (r"\bсел[оа]\b", "с"),
-    (r"\bгород\b", "г"),
-]
-
-
-def _to_e_upper(s: str) -> str:
-    """
-    Верхний регистр + приведение Ё->Е.
-    Делать в конце, после замен по regex, где встречаются [её].
-    """
-    s = s.upper()
-    return s.replace("Ё", "Е")
-
-
-def strip_honorific_tail(s: str) -> str:
-    # "… ИМЕНИ …" / "… ИМ …" – убрать хвост
-    return _HONORIFIC_RE.sub("", s).strip(" ,;.")
-
-
-def standardize_school_name(name: str, *, drop_honorific: bool = False) -> str:
-    if not name:
-        return ""
-
-    s = str(name).replace("\u00A0", " ")
-
-    # чинит "краяМБОУ" и подобные склейки
-    s = _GLUE_RE.sub(" ", s)
-
-    # единое тире
-    s = _DASHES_RE.sub("-", s)
-
-    # убираем префикс "123 - "
-    s = strip_leading_num_prefix(s)
-
-    # скобки сохраняем, кавычки чистим
-    s = remove_parens_keep_text(s)
-    s = clean_inner_quotes(s)
-    s = strip_outer_quotes(s)
-
-    # точки в инициалах/склейках
-    s = _DOT_BETWEEN_LETTERS_RE.sub("", s)
-
-    s = norm_spaces(s)
-
-    # сокращаем форму и тип (до приведения Ё->Е!)
-    for pat, repl in SCHOOL_REPLACEMENTS:
-        s = re.sub(pat, repl, s, flags=re.IGNORECASE)
-
-    # унификация "поселок/село/город"
-    for pat, repl in LOCATION_REPLACEMENTS:
-        s = re.sub(pat, repl, s, flags=re.IGNORECASE)
-
-    # нормализуем № (всегда пробел после №)
-    s = re.sub(r"№\s*(\d)", r"№ \1", s)
-
-    # при желании – обрезаем хвост "имени ..."
-    if drop_honorific:
-        s = strip_honorific_tail(s)
-
-    # верхний регистр + Ё->Е
-    s = _to_e_upper(s)
-
-    # убираем точки после заглавных букв (Г., С., А.С. и т.п.)
-    s = _DOT_AFTER_CAP_RE.sub("", s)
-
-    # финальная чистка пробелов и лишней пунктуации
-    s = norm_spaces(s).strip(" ,;.")
-    return s
-
-
-def make_key(s: str, *, drop_honorific: bool = False) -> str:
-    """
-    Ключ для сопоставления школ (устойчивый к пробелам/знакам/регистру).
-    drop_honorific=True – схлопывает 'СШ № 10' и 'СШ № 10 ИМЕНИ ...' в один ключ.
-    """
-    s = standardize_school_name(s, drop_honorific=drop_honorific)
-    return re.sub(r"[^0-9A-ZА-Я]+", "", s)  # Ё уже нет, она приведена к Е
-
-
-def make_muni_key(s: str) -> str:
-    s = norm_spaces(str(s))
-    s = _GLUE_RE.sub(" ", s)
-    s = _DASHES_RE.sub("-", s)
-    s = clean_inner_quotes(s)
-    s = strip_outer_quotes(s)
-    s = norm_spaces(s)
-    s = _to_e_upper(s)
-    s = _DOT_AFTER_CAP_RE.sub("", s)
-    return re.sub(r"[^0-9A-ZА-Я]+", "", s)
-
-
-# -------------------- Нормализация профилей --------------------
-
+# Нормализация профилей 
 PROFILE_ABSENT_RE = re.compile(r"(^|\b)(х|x|нет|отсутствует|не\s*имеется)\b", flags=re.IGNORECASE)
 PROFILE_TAIL_NOTE_RE = re.compile(r"(\b[хx]\b\s*[-–—]?\s*отсутствует.*)$", flags=re.IGNORECASE)
 HYPHEN_FIX_RE = re.compile(r"\s*[-–—]\s*")
@@ -331,8 +133,7 @@ def split_profiles(cell: str) -> List[str]:
     return out
 
 
-# -------------------- Выбор листа и чтение Excel --------------------
-
+#  Выбор листа и чтение Excel 
 def get_sheet_names(path: Path) -> List[str]:
     xls = pd.ExcelFile(path, engine="openpyxl")
     return list(xls.sheet_names)
@@ -450,47 +251,7 @@ def read_excel_fixed(path: Path, sheet: object) -> pd.DataFrame:
     return out
 
 
-# -------------------- Переменные окружения --------------------
-
-def load_env() -> None:
-    if load_dotenv is None:
-        return
-
-    # сначала пробуем из текущей папки
-    if (Path.cwd() / ".env").exists():
-        load_dotenv(dotenv_path=Path.cwd() / ".env")
-        return
-
-    # затем ищем рядом со скриптом и выше
-    here = Path(__file__).resolve()
-    for p in [here.parent] + list(here.parents):
-        env_path = p / ".env"
-        if env_path.exists():
-            load_dotenv(dotenv_path=env_path)
-            return
-
-    # последний шанс
-    load_dotenv()
-
-
-def get_db_config() -> Dict[str, object]:
-    load_env()
-
-    host = os.getenv("POSTGRES_HOST", "localhost")
-    port = int(os.getenv("POSTGRES_PORT", "5432"))
-    dbname = os.getenv("POSTGRES_DB")
-    user = os.getenv("POSTGRES_USER")
-    password = os.getenv("POSTGRES_PASSWORD")
-
-    missing = [k for k, v in [("POSTGRES_DB", dbname), ("POSTGRES_USER", user), ("POSTGRES_PASSWORD", password)] if not v]
-    if missing:
-        raise ValueError(f"Не заданы переменные окружения: {', '.join(missing)}")
-
-    return {"host": host, "port": port, "dbname": dbname, "user": user, "password": password}
-
-
-# -------------------- Вставки в БД --------------------
-
+#  Вставки в БД 
 def insert_regions(cur, regions: Sequence[str]) -> None:
     q = """
         INSERT INTO edu.region (name)
@@ -582,51 +343,7 @@ def insert_profile_links(cur, links: Iterable[Tuple[int, int]]) -> int:
     return len(data)
 
 
-# -------------------- Выбор файла пользователем --------------------
-
-def pick_file_dialog() -> Optional[Path]:
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-    except Exception:
-        return None
-
-    root = tk.Tk()
-    root.withdraw()
-    path = filedialog.askopenfilename(
-        title="Выберите Excel файл",
-        filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")],
-    )
-    root.destroy()
-    return Path(path) if path else None
-
-
-def resolve_user_path(s: str) -> Path:
-    p = Path(s)
-    if p.exists():
-        return p
-
-    cur = Path.cwd() / s
-    if cur.exists():
-        return cur
-
-    desktop = Path.home() / "Desktop" / s
-    if desktop.exists():
-        return desktop
-
-    if not s.lower().endswith((".xlsx", ".xls")):
-        for base in [Path.cwd(), Path.home() / "Desktop"]:
-            cand = base / f"{s}.xlsx"
-            if cand.exists():
-                return cand
-
-    raise FileNotFoundError(
-        f"Файл не найден: {s}. Укажи полный путь или положи файл в текущую папку или на рабочий стол."
-    )
-
-
-# -------------------- Основная загрузка --------------------
-
+#  Основная загрузка 
 def load_to_db(df: pd.DataFrame, db_cfg: Dict[str, object], dry_run: bool = False) -> None:
     if df.empty:
         print("Нет данных для загрузки")
@@ -728,7 +445,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     path: Optional[Path] = None
 
     if args.pick or not args.file:
-        path = pick_file_dialog()
+        path = pick_file_dialog_desktop()
         if path is None:
             if not args.file:
                 print('Окно выбора файла недоступно. Укажи файл так: python load_schools_to_db.py "Приморский край.xlsx"')
@@ -747,7 +464,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         sheet = pick_sheet_console(sheet_names, default=default)
 
     df = read_excel_fixed(path, sheet=sheet)
-    db_cfg = get_db_config()
+    db_cfg = get_db_config(search_from=Path(__file__))
     load_to_db(df, db_cfg, dry_run=bool(args.dry_run))
     return 0
 

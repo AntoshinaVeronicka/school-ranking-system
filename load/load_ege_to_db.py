@@ -30,6 +30,17 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
+from load_common import (
+    clean_inner_quotes,
+    get_db_config,
+    load_env_file,
+    make_muni_key,
+    make_school_key,
+    norm_spaces,
+    pick_file_dialog_desktop,
+    resolve_user_path,
+    standardize_school_name,
+)
 
 try:
     import psycopg2
@@ -37,12 +48,6 @@ try:
 except Exception:
     psycopg2 = None  # type: ignore
     execute_values = None  # type: ignore
-
-try:
-    from dotenv import load_dotenv
-except Exception:
-    load_dotenv = None  # type: ignore
-
 
 warnings.filterwarnings(
     "ignore", message=r"Print area cannot be set.*", category=UserWarning, module="openpyxl"
@@ -56,94 +61,6 @@ def setup_logging(level: str = "INFO") -> None:
         level=getattr(logging, level.upper(), logging.INFO),
         format="%(asctime)s | %(levelname)s | %(message)s",
     )
-
-
-# -------------------- text utils --------------------
-
-def norm_spaces(s: Any) -> str:
-    s = "" if s is None else str(s)
-    s = s.replace("\u00A0", " ")
-    return re.sub(r"\s+", " ", s.strip())
-
-
-def clean_inner_quotes(s: Any) -> str:
-    s = "" if s is None else str(s)
-    return s.replace("«", "").replace("»", "").replace('"', "").replace("'", "")
-
-
-def strip_outer_quotes(s: Any) -> str:
-    s = norm_spaces(s)
-    while True:
-        changed = False
-        for a, b in [('"', '"'), ("'", "'"), ("«", "»")]:
-            if len(s) >= 2 and s.startswith(a) and s.endswith(b):
-                s = s[1:-1].strip()
-                changed = True
-                break
-        if not changed:
-            break
-    return s.strip().strip('"').strip("'").strip("«").strip("»").strip()
-
-
-# -------------------- school normalization --------------------
-
-_PARENS_RE = re.compile(r"\(([^)]*)\)")
-_LEADING_NUM_RE = re.compile(r"^\s*\d+\s*[-–—]\s*")
-
-SCHOOL_REPLACEMENTS: List[Tuple[str, str]] = [
-    # org form
-    (r"\bФедеральн\w*\s+государственн\w*\s+каз[её]нн\w*\s+общеобразовательн\w*\s+учрежден\w*\b", "ФГКОУ"),
-    (r"\bКраев\w*\s+государственн\w*\s+автономн\w*\s+нетипов\w*\s+образовательн\w*\s+учрежден\w*\b", "КГАНОУ"),
-    (r"\bКраев\w*\s+государственн\w*\s+бюджетн\w*\s+общеобразовательн\w*\s+учрежден\w*\b", "КГБОУ"),
-    (r"\bМуниципальн\w*\s+автономн\w*\s+общеобразовательн\w*\s+учрежден\w*\b", "МАОУ"),
-    (r"\bМуниципальн\w*\s+бюджетн\w*\s+общеобразовательн\w*\s+учрежден\w*\b", "МБОУ"),
-    (r"\bМуниципальн\w*\s+каз[её]нн\w*\s+общеобразовательн\w*\s+учрежден\w*\b", "МКОУ"),
-    (r"\bМуниципальн\w*\s+общеобразовательн\w*\s+учрежден\w*\b", "МОУ"),
-    (r"\bЧастн\w*\s+общеобразовательн\w*\s+учрежден\w*\b", "ЧОУ"),
-    # type
-    (r"\bсредн\w*\s+общеобразовательн\w*\s+школ\w*\b", "СОШ"),
-    (r"\bобщеобразовательн\w*\s+школ\w*\b", "ОШ"),
-    (r"\bсредн\w*\s+школ\w*\b", "СШ"),
-    (r"\bвечерн\w*\s*\(сменн\w*\)\s*школ\w*\b", "ВСШ"),
-    (r"\bшкола[-\s]?интернат\b", "Школа-интернат"),
-    (r"\bгимназ\w*\b", "Гимназия"),
-    (r"\bлице\w*\b", "Лицей"),
-    (r"\bцентр\s+образован\w*\b", "Центр образования"),
-    (r"\bкадетск\w*\s+школ\w*\b", "Кадетская школа"),
-]
-
-
-def standardize_school_name(name: Any) -> str:
-    s = norm_spaces(name)
-    if not s:
-        return ""
-
-    s = _LEADING_NUM_RE.sub("", s).strip()
-    s = _PARENS_RE.sub(lambda m: f" {m.group(1)} ", s)
-
-    s = clean_inner_quotes(s)
-    s = strip_outer_quotes(s)
-    s = norm_spaces(s)
-
-    for pat, repl in SCHOOL_REPLACEMENTS:
-        s = re.sub(pat, repl, s, flags=re.IGNORECASE)
-
-    s = re.sub(r"№\s*(\d)", r"№ \1", s)
-    s = re.sub(r"\b([гс])\.(?=\S)", r"\1. ", s, flags=re.IGNORECASE)
-    s = re.sub(r"\bпос\.(?=\S)", "пос. ", s, flags=re.IGNORECASE)
-    s = re.sub(r"\bп\.(?=\S)", "п. ", s, flags=re.IGNORECASE)
-
-    return norm_spaces(s).strip(" ,;")
-
-
-def make_key(s: Any) -> str:
-    s = standardize_school_name(s).casefold().replace("ё", "е")
-    return re.sub(r"[^0-9a-zа-я]+", "", s, flags=re.IGNORECASE)
-
-
-def make_muni_key(s: Any) -> str:
-    s = norm_spaces(s).casefold().replace("ё", "е")
-    return re.sub(r"[^0-9a-zа-я]+", "", s, flags=re.IGNORECASE)
 
 
 # -------------------- subjects --------------------
@@ -225,53 +142,6 @@ def to_decimal_2(v: Any) -> Optional[Decimal]:
         return d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     except Exception:
         return None
-
-
-# -------------------- file picking --------------------
-
-def pick_file_dialog_desktop() -> Optional[Path]:
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-    except Exception:
-        return None
-
-    root = tk.Tk()
-    root.withdraw()
-
-    desktop = Path.home() / "Desktop"
-    if not desktop.exists():
-        desktop = Path.home()
-
-    p = filedialog.askopenfilename(
-        title="Выберите Excel файл",
-        initialdir=str(desktop),
-        filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")],
-    )
-    root.destroy()
-    return Path(p) if p else None
-
-
-def resolve_user_path(s: str) -> Path:
-    p = Path(s)
-    if p.exists():
-        return p
-    cand = Path.cwd() / s
-    if cand.exists():
-        return cand
-    cand = Path.home() / "Desktop" / s
-    if cand.exists():
-        return cand
-
-    if not s.lower().endswith((".xlsx", ".xls")):
-        for base in (Path.cwd(), Path.home() / "Desktop"):
-            cand2 = base / f"{s}.xlsx"
-            if cand2.exists():
-                return cand2
-
-    raise FileNotFoundError(
-        f"Файл не найден: {s}. Укажи полный путь или положи файл в текущую папку или на рабочий стол."
-    )
 
 
 # -------------------- excel reading helpers --------------------
@@ -454,30 +324,6 @@ def read_actual_excel(path: Path, sheet: str) -> pd.DataFrame:
     return clean_common_rows(out)
 
 
-# -------------------- env + db --------------------
-
-def load_env_file() -> None:
-    if load_dotenv is None:
-        return
-    if (Path.cwd() / ".env").exists():
-        load_dotenv(dotenv_path=Path.cwd() / ".env")
-        return
-    script_dir = Path(__file__).resolve().parent
-    if (script_dir / ".env").exists():
-        load_dotenv(dotenv_path=script_dir / ".env")
-        return
-
-
-def get_db_cfg() -> Dict[str, Any]:
-    return {
-        "host": os.getenv("POSTGRES_HOST", "localhost"),
-        "port": int(os.getenv("POSTGRES_PORT", "5432")),
-        "dbname": os.getenv("POSTGRES_DB", "school_ranking"),
-        "user": os.getenv("POSTGRES_USER", "app"),
-        "password": os.getenv("POSTGRES_PASSWORD", "app"),
-    }
-
-
 def fetch_allowed_kinds(cur) -> List[str]:
     cur.execute("SELECT unnest(enum_range(NULL::edu.ege_dataset_kind))::text")
     return [r[0] for r in cur.fetchall()]
@@ -568,7 +414,7 @@ def build_school_index(
     school_ids: Dict[str, List[int]] = {}
 
     for s in schools:
-        sk = make_key(s.full_name)
+        sk = make_school_key(s.full_name)
         mk = make_muni_key(s.municipality_name or "")
         pair_ids.setdefault((mk, sk), []).append(s.school_id)
         school_ids.setdefault(sk, []).append(s.school_id)
@@ -688,7 +534,7 @@ def load_ege_to_db(
     if psycopg2 is None or execute_values is None:
         raise RuntimeError("psycopg2 не установлен. Установи зависимости и повтори запуск.")
 
-    db_cfg = get_db_cfg()
+    db_cfg = get_db_config(search_from=Path(__file__))
     logging.info("Файл: %s", path)
     logging.info("Лист: %s", sheet)
     logging.info("Год: %s", year)
@@ -728,7 +574,7 @@ def load_ege_to_db(
                     continue
 
                 mk = make_muni_key(mun)
-                sk = make_key(sch)
+                sk = make_school_key(sch)
 
                 sid = pair_unique.get((mk, sk))
                 if sid is None:
@@ -876,7 +722,7 @@ def load_ege_to_db(
 
 def main() -> None:
     setup_logging(os.getenv("LOG_LEVEL", "INFO"))
-    load_env_file()
+    load_env_file(search_from=Path(__file__))
 
     ap = argparse.ArgumentParser(description="Загрузка данных ЕГЭ из Excel в PostgreSQL")
     ap.add_argument("--file", help="Путь к Excel. Если не указан – откроется диалог выбора файла.")
