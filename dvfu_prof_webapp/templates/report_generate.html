@@ -1,17 +1,128 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Выгрузка и отчёт</h1>
+<h1>Выгрузка и отчет</h1>
 
-<div class="card">
-  <p class="muted">
-    Экран выгрузки и отчётности. В учебном прототипе здесь показан каркас раздела: можно перейти в архив
-    выгрузок или к истории расчётов.
-  </p>
+<form method="get" action="/reports/generate" class="card search-form">
+  <div class="search-grid">
+    <label class="field field-q">Расчет рейтинга (run_id)
+      <select name="run_id">
+        {% if not runs %}
+          <option value="">Расчеты пока отсутствуют</option>
+        {% else %}
+          {% for run in runs %}
+            <option value="{{ run.run_id }}" {% if selected_run_id == run.run_id %}selected{% endif %}>
+              #{{ run.run_id }} | {{ run.calculated_at }} | школ: {{ run.rated_cnt }} | {{ run.run_name if run.run_name else "Рейтинг" }}
+            </option>
+          {% endfor %}
+        {% endif %}
+      </select>
+    </label>
+  </div>
 
-  <div class="row">
-    <a class="btn" href="/reports/archive">В архив</a>
-    <a class="btn btn-ghost" href="/reports/calc-history">История расчётов</a>
+  <div class="row search-actions">
+    <button class="btn" type="submit">Показать расчет</button>
+    <a class="btn btn-ghost" href="/reports/archive">К архиву</a>
     <a class="btn btn-ghost" href="/reports">Назад</a>
   </div>
-</div>
+</form>
+
+{% if error %}
+  <div class="alert">{{ error }}</div>
+{% endif %}
+{% if ok %}
+  <div class="ok">{{ ok }}</div>
+{% endif %}
+
+{% if selected_run %}
+  <div class="card">
+    <h2>Выбран расчет #{{ selected_run.run_id }}</h2>
+    <p class="muted">
+      Дата расчета: {{ selected_run.calculated_at }} |
+      Пользователь: {{ selected_run.calculated_by if selected_run.calculated_by else "—" }} |
+      Школ в ранжировании: {{ selected_run.rated_cnt }} |
+      Отчетов в архиве: {{ selected_run.reports_cnt }}
+    </p>
+    <div class="row">
+      <a class="btn btn-ghost" href="/reports/run/{{ selected_run.run_id }}/export">Выгрузить run в Excel</a>
+      <a class="btn btn-ghost" href="/reports/calc-history">История расчетов</a>
+    </div>
+  </div>
+
+  <form method="post" action="/reports/generate" class="card search-form">
+    <input type="hidden" name="run_id" value="{{ selected_run.run_id }}">
+
+    <div class="search-grid">
+      <label class="field field-q">Школа (необязательно)
+        <select name="school_id">
+          <option value="">Все школы из выбранного run</option>
+          {% for school in run_schools %}
+            <option value="{{ school.school_id }}" {% if selected_school_id == school.school_id %}selected{% endif %}>
+              {% if school.rank_pos %}#{{ school.rank_pos }}{% else %}—{% endif %} | {{ school.full_name }}
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label class="field">Тип отчета
+        <select name="report_type" id="report_type_select">
+          <option
+            value="standard"
+            data-label="Стандартный"
+            data-description="Краткая карточка школы: место в рейтинге, итоговый балл, ключевые метрики и базовая информация."
+            {% if report_type == "standard" %}selected{% endif %}
+          >
+            Стандартный
+          </option>
+          <option
+            value="detailed"
+            data-label="Детализированный"
+            data-description="Расширенный отчет: карточка школы, метрики расчета и дополнительные служебные поля для анализа."
+            {% if report_type == "detailed" %}selected{% endif %}
+          >
+            Детализированный
+          </option>
+        </select>
+      </label>
+
+      <label class="field">Формат отчета
+        <select name="report_format">
+          {% for f in ["json", "xlsx"] %}
+            <option value="{{ f }}" {% if report_format == f %}selected{% endif %}>{{ f }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+
+    <div class="form-hint muted">
+      <p id="report_type_selected_text"></p>
+      <p><b>Состав типов отчета:</b></p>
+      <ul>
+        <li><b>Стандартный</b> - краткая карточка школы: место в рейтинге, итоговый балл, ключевые метрики и базовая информация.</li>
+        <li><b>Детализированный</b> - расширенный отчет: карточка школы, метрики расчета и дополнительные служебные поля для анализа.</li>
+      </ul>
+    </div>
+
+    <div class="row search-actions">
+      <button class="btn" type="submit">Сформировать и сохранить в архив</button>
+    </div>
+  </form>
+  <script>
+    (function () {
+      const select = document.getElementById("report_type_select");
+      const selectedText = document.getElementById("report_type_selected_text");
+      if (!select || !selectedText) return;
+
+      const update = () => {
+        const option = select.options[select.selectedIndex];
+        if (!option) return;
+        const label = option.dataset.label || option.textContent || option.value;
+        const description = option.dataset.description || "";
+        selectedText.innerHTML = `<b>Выбранный тип:</b> ${label}${description ? " - " + description : ""}`;
+      };
+
+      select.addEventListener("change", update);
+      update();
+    })();
+  </script>
+{% endif %}
 {% endblock %}

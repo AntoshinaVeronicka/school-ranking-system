@@ -2,34 +2,52 @@
 {% block content %}
 <h1>Архив выгрузок</h1>
 
+{% if ok_message %}
+  <div class="ok">{{ ok_message }}</div>
+{% endif %}
+
 <div class="card">
-  <p class="muted">Демо-архив: список последних операций импорта (пример журнала артефактов).</p>
-  <table class="table">
-    <thead>
-      <tr>
-        <th>Дата</th>
-        <th>Тип</th>
-        <th>Файл</th>
-        <th>Статус</th>
-        <th>Детали</th>
-      </tr>
-    </thead>
-    <tbody>
-    {% for j in jobs %}
-      <tr>
-        <td>{{ j.created_at }}</td>
-        <td>{{ j.job_type }}</td>
-        <td>{{ j.filename }}</td>
-        <td>{{ j.status }}</td>
-        <td class="muted">{{ j.details }}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
+  {% if reports %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Дата</th>
+            <th>report_id</th>
+            <th>run_id</th>
+            <th>Школа</th>
+            <th>Место</th>
+            <th>Тип</th>
+            <th>Формат</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in reports %}
+            <tr>
+              <td>{{ item.generated_at }}</td>
+              <td>{{ item.report_id }}</td>
+              <td>{{ item.run_id }}</td>
+              <td>{{ item.full_name }}</td>
+              <td>{{ item.rank_pos if item.rank_pos is not none else "—" }}</td>
+              <td>{{ item.report_type }}</td>
+              <td>{{ item.report_format if item.report_format else "json" }}</td>
+              <td>
+                <a class="btn btn-small" href="/reports/report/{{ item.report_id }}/export">Скачать отчет</a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="muted">Архив пуст. Сначала сформируйте отчеты в разделе «Выгрузка и отчет».</p>
+  {% endif %}
 </div>
 
 <div class="row">
-  <a class="btn" href="/reports/generate">Открыть выгрузку</a>
+  <a class="btn" href="/reports/generate">Выгрузка и отчет</a>
+  <a class="btn btn-ghost" href="/reports/calc-history">История расчетов</a>
   <a class="btn btn-ghost" href="/reports">Назад</a>
 </div>
 {% endblock %}

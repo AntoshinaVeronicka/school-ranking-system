@@ -35,10 +35,12 @@
     <p>Формирование выгрузок и отчетов для выбранных школ и наборов данных.</p>
   </a>
 
+  {% if false %}
   <a class="menu-tile menu-tile-history" href="/reports/calc-history">
     <h2>История расчетов</h2>
     <p>Журнал запусков, навигация к рейтингам и карточкам школ.</p>
   </a>
+  {% endif %}
 
   {% if user.is_admin %}
     <a class="menu-tile menu-tile-admin" href="/admin">

@@ -1,17 +1,55 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>История расчётов</h1>
+<h1>История расчетов</h1>
 
 <div class="card">
-  <p class="muted">
-    В этом экране можно хранить журнал запусков расчётов рейтинга и переходить к связанным экранам.
-    Сейчас показан учебный каркас раздела.
-  </p>
+  {% if rows %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Дата</th>
+            <th>Сценарий</th>
+            <th>request_id</th>
+            <th>run_id</th>
+            <th>Год</th>
+            <th>Выбрано школ</th>
+            <th>В рейтинге</th>
+            <th>Фильтры</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>{{ row.calculated_at if row.calculated_at else row.created_at }}</td>
+              <td>{{ row.scenario }}</td>
+              <td>{{ row.request_id }}</td>
+              <td>{{ row.run_id if row.run_id is not none else "—" }}</td>
+              <td>{{ row.year_basis }}</td>
+              <td>{{ row.selected_cnt }}</td>
+              <td>{{ row.rated_cnt if row.run_id is not none else "—" }}</td>
+              <td>{{ row.filter_summary if row.filter_summary else "—" }}</td>
+              <td>
+                {% if row.run_id is not none %}
+                  <a class="btn btn-small" href="/reports/run/{{ row.run_id }}/export">Excel</a>
+                {% else %}
+                  <a class="btn btn-small btn-ghost" href="/search">Поиск</a>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="muted">История пока пуста. Выполните поиск или расчет рейтинга.</p>
+  {% endif %}
+</div>
 
-  <div class="row">
-    <a class="btn" href="/rating/profile">К рейтингу</a>
-    <a class="btn btn-ghost" href="/search">К школам</a>
-    <a class="btn btn-ghost" href="/reports">Назад</a>
-  </div>
+<div class="row">
+  <a class="btn" href="/reports/generate">Выгрузка и отчет</a>
+  <a class="btn btn-ghost" href="/reports/archive">Архив выгрузок</a>
+  <a class="btn btn-ghost" href="/reports">Назад</a>
 </div>
 {% endblock %}

@@ -3,6 +3,8 @@ from __future__ import annotations
 import io
 import json
 import traceback
+from datetime import datetime
+from decimal import Decimal
 from urllib.parse import urlencode
 
 import pandas as pd
@@ -12,6 +14,17 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 try:
+    from .analytics_repo import (
+        create_reports_for_run,
+        fetch_calc_history as fetch_calc_history_rows,
+        fetch_rating_runs,
+        fetch_report_archive as fetch_report_archive_rows,
+        fetch_run_export_data,
+        fetch_run_schools,
+        get_report_payload,
+        save_rating_run,
+        save_search_request,
+    )
     from .config import LOAD_PROGRAMS_SCRIPT, LOAD_SCHOOLS_SCRIPT, UPLOAD_DIR
     from .db import ImportJob, User, get_db
     from .rating_repo import (
@@ -51,6 +64,17 @@ try:
         verify_password,
     )
 except ImportError:
+    from analytics_repo import (
+        create_reports_for_run,
+        fetch_calc_history as fetch_calc_history_rows,
+        fetch_rating_runs,
+        fetch_report_archive as fetch_report_archive_rows,
+        fetch_run_export_data,
+        fetch_run_schools,
+        get_report_payload,
+        save_rating_run,
+        save_search_request,
+    )
     from config import LOAD_PROGRAMS_SCRIPT, LOAD_SCHOOLS_SCRIPT, UPLOAD_DIR
     from db import ImportJob, User, get_db
     from rating_repo import (
@@ -92,8 +116,7 @@ except ImportError:
 
 router = APIRouter()
 
-
-# 0 Вход / 0.1 Восстановление / 1 Меню / 1.1 Выход
+# 0 Р’С…РѕРґ / 0.1 Р’РѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРёРµ / 1 РњРµРЅСЋ / 1.1 Р’С‹С…РѕРґ
 @router.get("/")
 def main_menu(request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
@@ -116,7 +139,7 @@ def login_action(
 ):
     user = db.query(User).filter(User.login == login).one_or_none()
     if user is None or not verify_password(password, user.password_hash):
-        return render("login.html", {"request": request, "user": None, "error": "Неверный логин или пароль."})
+        return render("login.html", {"request": request, "user": None, "error": "РќРµРІРµСЂРЅС‹Р№ Р»РѕРіРёРЅ РёР»Рё РїР°СЂРѕР»СЊ."})
 
     request.session["user_id"] = user.id
     return RedirectResponse("/", status_code=303)
@@ -129,7 +152,7 @@ def recovery_page(request: Request):
 
 @router.post("/recovery")
 def recovery_action(request: Request, login: str = Form(...)):
-    info = f"Запрос на восстановление для пользователя «{login}» зарегистрирован (демо-режим)."
+    info = f"Р—Р°РїСЂРѕСЃ РЅР° РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРёРµ РґР»СЏ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ В«{login}В» Р·Р°СЂРµРіРёСЃС‚СЂРёСЂРѕРІР°РЅ (РґРµРјРѕ-СЂРµР¶РёРј)."
     return render("recovery.html", {"request": request, "user": None, "info": info})
 
 
@@ -139,7 +162,7 @@ def logout(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 
-# 2 Данные и загрузки
+# 2 Р”Р°РЅРЅС‹Рµ Рё Р·Р°РіСЂСѓР·РєРё
 @router.get("/data")
 def data_mgmt(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
@@ -191,7 +214,7 @@ def import_ege_action(
             {
                 "request": request,
                 "user": user,
-                "error": "Тип данных должен быть 'plan' или 'actual'.",
+                "error": "РўРёРї РґР°РЅРЅС‹С… РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ 'plan' РёР»Рё 'actual'.",
                 "ok": None,
                 "dialog_output": None,
                 "form": form_state,
@@ -216,22 +239,22 @@ def import_ege_action(
         if year_value is None:
             year_value = infer_year_from_sheet_name(sheet_name)
         if year_value is None:
-            raise ValueError("Не удалось определить год автоматически. Укажите поле 'Год' вручную.")
+            raise ValueError("РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ РіРѕРґ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё. РЈРєР°Р¶РёС‚Рµ РїРѕР»Рµ 'Р“РѕРґ' РІСЂСѓС‡РЅСѓСЋ.")
 
         region_value = region.strip() or filepath.stem.replace("_", " ").strip()
         is_dry_run = dry_run is not None
 
         dialog_header = [
-            "Параметры запуска:",
-            f"- Файл: {safe_name}",
-            f"- Доступные листы: {', '.join(available_sheets)}",
-            f"- Лист: {sheet_name}",
-            f"- Тип данных: {kind_value}",
-            f"- Год: {year_value}",
-            f"- Регион: {region_value}",
-            f"- Режим: {'dry-run' if is_dry_run else 'запись в БД'}",
+            "РџР°СЂР°РјРµС‚СЂС‹ Р·Р°РїСѓСЃРєР°:",
+            f"- Р¤Р°Р№Р»: {safe_name}",
+            f"- Р”РѕСЃС‚СѓРїРЅС‹Рµ Р»РёСЃС‚С‹: {', '.join(available_sheets)}",
+            f"- Р›РёСЃС‚: {sheet_name}",
+            f"- РўРёРї РґР°РЅРЅС‹С…: {kind_value}",
+            f"- Р“РѕРґ: {year_value}",
+            f"- Р РµРіРёРѕРЅ: {region_value}",
+            f"- Р РµР¶РёРј: {'dry-run' if is_dry_run else 'Р·Р°РїРёСЃСЊ РІ Р‘Р”'}",
             "",
-            "Вывод скрипта:",
+            "Р’С‹РІРѕРґ СЃРєСЂРёРїС‚Р°:",
         ]
 
         success, script_output = run_ege_loader_script(
@@ -266,8 +289,8 @@ def import_ege_action(
             {
                 "request": request,
                 "user": user,
-                "error": None if success else "Загрузка ЕГЭ завершилась с ошибкой. Смотрите лог ниже.",
-                "ok": "Загрузка ЕГЭ выполнена успешно." if success else None,
+                "error": None if success else "EGE import finished with errors. See log below.",
+                "ok": "EGE import completed successfully." if success else None,
                 "dialog_output": dialog_output,
                 "form": form_state,
             },
@@ -296,9 +319,9 @@ def import_admissions_page(request: Request, db: Session = Depends(get_db)):
     return render_generic_import_page(
         request=request,
         user=user,
-        title="Импорт приёма",
+        title="РРјРїРѕСЂС‚ РїСЂРёС‘РјР°",
         submit_url="/data/admissions",
-        hint="Черновая форма загрузки файла по разделу приёма. Подключение бизнес-логики можно добавить на следующем шаге.",
+        hint="Р§РµСЂРЅРѕРІР°СЏ С„РѕСЂРјР° Р·Р°РіСЂСѓР·РєРё С„Р°Р№Р»Р° РїРѕ СЂР°Р·РґРµР»Сѓ РїСЂРёС‘РјР°. РџРѕРґРєР»СЋС‡РµРЅРёРµ Р±РёР·РЅРµСЃ-Р»РѕРіРёРєРё РјРѕР¶РЅРѕ РґРѕР±Р°РІРёС‚СЊ РЅР° СЃР»РµРґСѓСЋС‰РµРј С€Р°РіРµ.",
         form=default_upload_form(),
         error=None,
         ok=None,
@@ -321,9 +344,9 @@ def import_admissions_action(
         request=request,
         user=user,
         db=db,
-        title="Импорт приёма",
+        title="РРјРїРѕСЂС‚ РїСЂРёС‘РјР°",
         submit_url="/data/admissions",
-        hint="Черновая форма загрузки файла по разделу приёма. Подключение бизнес-логики можно добавить на следующем шаге.",
+        hint="Р§РµСЂРЅРѕРІР°СЏ С„РѕСЂРјР° Р·Р°РіСЂСѓР·РєРё С„Р°Р№Р»Р° РїРѕ СЂР°Р·РґРµР»Сѓ РїСЂРёС‘РјР°. РџРѕРґРєР»СЋС‡РµРЅРёРµ Р±РёР·РЅРµСЃ-Р»РѕРіРёРєРё РјРѕР¶РЅРѕ РґРѕР±Р°РІРёС‚СЊ РЅР° СЃР»РµРґСѓСЋС‰РµРј С€Р°РіРµ.",
         job_type="admissions",
         upload_subdir="admissions",
         region=region,
@@ -340,9 +363,9 @@ def import_events_page(request: Request, db: Session = Depends(get_db)):
     return render_generic_import_page(
         request=request,
         user=user,
-        title="Импорт профориентации",
+        title="РРјРїРѕСЂС‚ РїСЂРѕС„РѕСЂРёРµРЅС‚Р°С†РёРё",
         submit_url="/data/events",
-        hint="Черновая форма загрузки файла по разделу профориентации. Подключение бизнес-логики можно добавить на следующем шаге.",
+        hint="Р§РµСЂРЅРѕРІР°СЏ С„РѕСЂРјР° Р·Р°РіСЂСѓР·РєРё С„Р°Р№Р»Р° РїРѕ СЂР°Р·РґРµР»Сѓ РїСЂРѕС„РѕСЂРёРµРЅС‚Р°С†РёРё. РџРѕРґРєР»СЋС‡РµРЅРёРµ Р±РёР·РЅРµСЃ-Р»РѕРіРёРєРё РјРѕР¶РЅРѕ РґРѕР±Р°РІРёС‚СЊ РЅР° СЃР»РµРґСѓСЋС‰РµРј С€Р°РіРµ.",
         form=default_upload_form(),
         error=None,
         ok=None,
@@ -365,9 +388,9 @@ def import_events_action(
         request=request,
         user=user,
         db=db,
-        title="Импорт профориентации",
+        title="РРјРїРѕСЂС‚ РїСЂРѕС„РѕСЂРёРµРЅС‚Р°С†РёРё",
         submit_url="/data/events",
-        hint="Черновая форма загрузки файла по разделу профориентации. Подключение бизнес-логики можно добавить на следующем шаге.",
+        hint="Р§РµСЂРЅРѕРІР°СЏ С„РѕСЂРјР° Р·Р°РіСЂСѓР·РєРё С„Р°Р№Р»Р° РїРѕ СЂР°Р·РґРµР»Сѓ РїСЂРѕС„РѕСЂРёРµРЅС‚Р°С†РёРё. РџРѕРґРєР»СЋС‡РµРЅРёРµ Р±РёР·РЅРµСЃ-Р»РѕРіРёРєРё РјРѕР¶РЅРѕ РґРѕР±Р°РІРёС‚СЊ РЅР° СЃР»РµРґСѓСЋС‰РµРј С€Р°РіРµ.",
         job_type="events",
         upload_subdir="events",
         region=region,
@@ -427,7 +450,7 @@ def directories_load_action(
                 "user": user,
                 "loader_form": form_state,
                 "subject_scores": get_subject_scores_from_db(),
-                "loader_error": "Неизвестный тип загрузчика.",
+                "loader_error": "РќРµРёР·РІРµСЃС‚РЅС‹Р№ С‚РёРї Р·Р°РіСЂСѓР·С‡РёРєР°.",
                 "loader_ok": None,
                 "loader_output": None,
                 "scores_error": None,
@@ -457,12 +480,12 @@ def directories_load_action(
 
         if loader_type == "schools":
             script_path = LOAD_SCHOOLS_SCRIPT
-            title = "Загрузка: Регион / Муниципалитет / Школа / Профиль"
+            title = "Р—Р°РіСЂСѓР·РєР°: Р РµРіРёРѕРЅ / РњСѓРЅРёС†РёРїР°Р»РёС‚РµС‚ / РЁРєРѕР»Р° / РџСЂРѕС„РёР»СЊ"
             if dry_run is not None:
                 args.append("--dry-run")
         else:
             script_path = LOAD_PROGRAMS_SCRIPT
-            title = "Загрузка: Направления и требования по ВИ"
+            title = "Р—Р°РіСЂСѓР·РєР°: РќР°РїСЂР°РІР»РµРЅРёСЏ Рё С‚СЂРµР±РѕРІР°РЅРёСЏ РїРѕ Р’Р"
             if dry_run is not None:
                 args.append("--dry-run")
             if create_missing_subjects is not None:
@@ -472,13 +495,13 @@ def directories_load_action(
         loader_output = "\n".join(
             [
                 f"{title}",
-                f"- Файл: {safe_name}",
-                f"- Доступные листы: {', '.join(available_sheets)}",
-                f"- Лист: {sheet_name}",
-                f"- Dry-run: {'да' if dry_run is not None else 'нет'}",
-                f"- create-missing-subjects: {'да' if create_missing_subjects is not None else 'нет'}",
+                f"- Р¤Р°Р№Р»: {safe_name}",
+                f"- Р”РѕСЃС‚СѓРїРЅС‹Рµ Р»РёСЃС‚С‹: {', '.join(available_sheets)}",
+                f"- Р›РёСЃС‚: {sheet_name}",
+                f"- Dry-run: {'РґР°' if dry_run is not None else 'РЅРµС‚'}",
+                f"- create-missing-subjects: {'РґР°' if create_missing_subjects is not None else 'РЅРµС‚'}",
                 "",
-                "Вывод скрипта:",
+                "Р’С‹РІРѕРґ СЃРєСЂРёРїС‚Р°:",
                 script_output,
             ]
         )
@@ -505,8 +528,8 @@ def directories_load_action(
                 "user": user,
                 "loader_form": form_state,
                 "subject_scores": get_subject_scores_from_db(),
-                "loader_error": None if success else "Загрузка справочников завершилась с ошибкой.",
-                "loader_ok": "Загрузка справочников выполнена успешно." if success else None,
+                "loader_error": None if success else "Р—Р°РіСЂСѓР·РєР° СЃРїСЂР°РІРѕС‡РЅРёРєРѕРІ Р·Р°РІРµСЂС€РёР»Р°СЃСЊ СЃ РѕС€РёР±РєРѕР№.",
+                "loader_ok": "Р—Р°РіСЂСѓР·РєР° СЃРїСЂР°РІРѕС‡РЅРёРєРѕРІ РІС‹РїРѕР»РЅРµРЅР° СѓСЃРїРµС€РЅРѕ." if success else None,
                 "loader_output": loader_output,
                 "scores_error": None,
                 "scores_ok": None,
@@ -550,15 +573,15 @@ async def directories_min_scores_action(request: Request, db: Session = Depends(
         name = str(row["name"])
         raw = str(row["min_passing_score"]).strip()
         if not raw:
-            errors.append(f"Для предмета '{name}' не заполнен минимальный балл.")
+            errors.append(f"Р”Р»СЏ РїСЂРµРґРјРµС‚Р° '{name}' РЅРµ Р·Р°РїРѕР»РЅРµРЅ РјРёРЅРёРјР°Р»СЊРЅС‹Р№ Р±Р°Р»Р».")
             continue
         try:
             score = int(raw)
         except ValueError:
-            errors.append(f"Для предмета '{name}' значение '{raw}' не является числом.")
+            errors.append(f"Р”Р»СЏ РїСЂРµРґРјРµС‚Р° '{name}' Р·РЅР°С‡РµРЅРёРµ '{raw}' РЅРµ СЏРІР»СЏРµС‚СЃСЏ С‡РёСЃР»РѕРј.")
             continue
         if score < 0 or score > 100:
-            errors.append(f"Для предмета '{name}' минимальный балл должен быть в диапазоне 0..100.")
+            errors.append(f"Р”Р»СЏ РїСЂРµРґРјРµС‚Р° '{name}' РјРёРЅРёРјР°Р»СЊРЅС‹Р№ Р±Р°Р»Р» РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ РІ РґРёР°РїР°Р·РѕРЅРµ 0..100.")
             continue
         updates.append((subject_id, name, score))
         row["min_passing_score"] = score
@@ -647,10 +670,10 @@ async def directories_min_scores_action(request: Request, db: Session = Depends(
 
         score_output = "\n".join(
             [
-                "Обновление минимальных баллов ЕГЭ:",
-                f"- Обновлено по subject_id: {updated}",
-                f"- Обновлено по name: {updated_by_name}",
-                f"- Вставлено новых строк: {inserted}",
+                "РћР±РЅРѕРІР»РµРЅРёРµ РјРёРЅРёРјР°Р»СЊРЅС‹С… Р±Р°Р»Р»РѕРІ Р•Р“Р­:",
+                f"- РћР±РЅРѕРІР»РµРЅРѕ РїРѕ subject_id: {updated}",
+                f"- РћР±РЅРѕРІР»РµРЅРѕ РїРѕ name: {updated_by_name}",
+                f"- Р’СЃС‚Р°РІР»РµРЅРѕ РЅРѕРІС‹С… СЃС‚СЂРѕРє: {inserted}",
             ]
         )
 
@@ -676,7 +699,7 @@ async def directories_min_scores_action(request: Request, db: Session = Depends(
                 "loader_ok": None,
                 "loader_output": None,
                 "scores_error": None,
-                "scores_ok": "Минимальные баллы обновлены.",
+                "scores_ok": "РњРёРЅРёРјР°Р»СЊРЅС‹Рµ Р±Р°Р»Р»С‹ РѕР±РЅРѕРІР»РµРЅС‹.",
                 "scores_output": score_output,
             },
         )
@@ -716,7 +739,7 @@ def history_page(request: Request, db: Session = Depends(get_db)):
     return render("history.html", {"request": request, "user": user, "jobs": jobs})
 
 
-# 3 Поиск и карточка школы
+# 3 РџРѕРёСЃРє Рё РєР°СЂС‚РѕС‡РєР° С€РєРѕР»С‹
 def _build_search_filters(
     *,
     q: str,
@@ -805,6 +828,34 @@ def _parse_optional_float(value: str | None) -> float | None:
         return None
 
 
+def _excel_safe_value(value: object) -> object:
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            return value.isoformat()
+        return value
+    if isinstance(value, pd.Timestamp):
+        if value.tz is not None:
+            return value.isoformat()
+        py_dt = value.to_pydatetime()
+        return py_dt
+    if isinstance(value, (dict, list, tuple, set)):
+        return json.dumps(value, ensure_ascii=False, default=str)
+    return value
+
+
+def _prepare_df_for_excel(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    prepared = df.copy()
+    for col in prepared.columns:
+        prepared[col] = prepared[col].map(_excel_safe_value)
+    return prepared
+
+
 @router.get("/search")
 def search_page(
     request: Request,
@@ -832,6 +883,7 @@ def search_page(
     profile_ids_value = _parse_int_list(profile_ids)
     safe_page = _parse_bounded_int(page, default=1, min_value=1)
     safe_per_page = _parse_bounded_int(per_page, default=20, min_value=5, max_value=200)
+    has_query = bool(request.query_params)
 
     filters = _build_search_filters(
         q=q,
@@ -849,6 +901,35 @@ def search_page(
     if safe_page > total_pages:
         safe_page = total_pages
         results, _ = search_schools(filters, page=safe_page, per_page=safe_per_page, apply_pagination=True)
+
+    saved_request_id: int | None = None
+    if has_query:
+        try:
+            save_rows = results
+            try:
+                save_rows, _ = search_schools(filters, page=1, per_page=safe_per_page, apply_pagination=False)
+            except Exception:
+                traceback.print_exc()
+
+            saved_request_id = save_search_request(
+                created_by=user.login,
+                filters={
+                    "q": q.strip(),
+                    "region_id": region_id_value,
+                    "municipality_id": municipality_id_value,
+                    "profile_ids": profile_ids_value,
+                    "year": year_value,
+                    "kind": kind.strip(),
+                    "subject_ids": subject_ids_value,
+                },
+                rows=save_rows,
+                total_rows=total,
+                page=safe_page,
+                per_page=safe_per_page,
+            )
+        except Exception:
+            # Persistence should not break user flow.
+            traceback.print_exc()
 
     query_without_page = _build_search_query_without_page(
         q=q.strip(),
@@ -878,6 +959,7 @@ def search_page(
             "total_pages": total_pages,
             "query_without_page": query_without_page,
             "current_query": current_query,
+            "saved_request_id": saved_request_id,
             "filters": {
                 "q": q.strip(),
                 "region_id": region_id_value,
@@ -1227,7 +1309,7 @@ def school_card(request: Request, school_id: int, db: Session = Depends(get_db))
     )
 
 
-# 4 Подбор и рейтинг
+# 4 РџРѕРґР±РѕСЂ Рё СЂРµР№С‚РёРЅРі
 def _build_rating_query(
     *,
     q: str,
@@ -1373,6 +1455,8 @@ def rating_profile(
     )
 
     ranked: list[dict[str, object]] = []
+    saved_request_id: int | None = None
+    saved_run_id: int | None = None
     if has_query:
         filters = RatingFilters(
             q=q.strip(),
@@ -1396,6 +1480,38 @@ def rating_profile(
             threshold_share=max(0.0, w_threshold_share_value),
         )
         ranked = calculate_school_rating(filters, weights)
+        try:
+            saved = save_rating_run(
+                created_by=user.login,
+                filters={
+                    "q": q.strip(),
+                    "region_id": region_id_value,
+                    "municipality_id": municipality_id_value,
+                    "profile_ids": profile_ids_value,
+                    "year": year_value,
+                    "kind": kind.strip(),
+                    "subject_ids": subject_ids_value,
+                    "institute_ids": institute_ids_value,
+                    "program_ids": program_ids_value,
+                    "min_graduates": min_graduates_value,
+                    "min_avg_score": min_avg_score_value,
+                    "enforce_subject_threshold": enforce_threshold_value,
+                    "limit": limit_value,
+                },
+                weights={
+                    "w_graduates": w_graduates_value,
+                    "w_avg_score": w_avg_score_value,
+                    "w_match_share": w_match_share_value,
+                    "w_threshold_share": w_threshold_share_value,
+                },
+                ranked_rows=ranked,
+            )
+            if saved:
+                saved_request_id = int(saved.get("request_id", 0) or 0) or None
+                saved_run_id = int(saved.get("run_id", 0) or 0) or None
+        except Exception:
+            # Persistence should not break user flow.
+            traceback.print_exc()
 
     current_query = _build_rating_query(
         q=q.strip(),
@@ -1427,6 +1543,8 @@ def rating_profile(
             "total": len(ranked),
             "program_requirements": program_requirements,
             "current_query": current_query,
+            "saved_request_id": saved_request_id,
+            "saved_run_id": saved_run_id,
             "filters": {
                 "q": q.strip(),
                 "region_id": region_id_value,
@@ -1666,7 +1784,7 @@ def rating_calc(
     return RedirectResponse(location, status_code=303)
 
 
-# 5 Настройки анализа (заглушки)
+# 5 РќР°СЃС‚СЂРѕР№РєРё Р°РЅР°Р»РёР·Р° (Р·Р°РіР»СѓС€РєРё)
 @router.get("/settings")
 def settings_home(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
@@ -1676,48 +1794,340 @@ def settings_home(request: Request, db: Session = Depends(get_db)):
 @router.get("/settings/filters")
 def settings_filters(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
-    return render("stub_page.html", {"request": request, "user": user, "title": "Конструктор фильтров", "back_url": "/settings"})
+    return render("stub_page.html", {"request": request, "user": user, "title": "РљРѕРЅСЃС‚СЂСѓРєС‚РѕСЂ С„РёР»СЊС‚СЂРѕРІ", "back_url": "/settings"})
 
 
 @router.get("/settings/weights")
 def settings_weights(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
-    return render("stub_page.html", {"request": request, "user": user, "title": "Метрики и веса", "back_url": "/settings"})
+    return render("stub_page.html", {"request": request, "user": user, "title": "РњРµС‚СЂРёРєРё Рё РІРµСЃР°", "back_url": "/settings"})
 
 
 @router.get("/settings/profiles")
 def settings_profiles(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
-    return render("stub_page.html", {"request": request, "user": user, "title": "Профили расчёта", "back_url": "/settings"})
+    return render("stub_page.html", {"request": request, "user": user, "title": "РџСЂРѕС„РёР»Рё СЂР°СЃС‡С‘С‚Р°", "back_url": "/settings"})
 
 
-# 6 Отчётность
+# 6 РћС‚С‡С‘С‚РЅРѕСЃС‚СЊ
 @router.get("/reports")
 def reports_home(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
     return render("reports_home.html", {"request": request, "user": user})
 
 
+def _render_report_generate_page(
+    *,
+    request: Request,
+    user: User,
+    selected_run_id: int | None,
+    selected_school_id: int | None = None,
+    report_type: str = "standard",
+    report_format: str = "json",
+    error: str | None = None,
+    ok: str | None = None,
+):
+    page_error = error
+    runs: list[dict[str, object]] = []
+    try:
+        runs = fetch_rating_runs(limit=200)
+    except Exception as exc:
+        traceback.print_exc()
+        page_error = page_error or f"Failed to load rating runs list: {exc}"
+
+    run_ids = {int(item["run_id"]) for item in runs}
+    if selected_run_id is not None and selected_run_id not in run_ids:
+        selected_run_id = None
+    if selected_run_id is None and runs:
+        selected_run_id = int(runs[0]["run_id"])
+
+    selected_run = (
+        next((item for item in runs if int(item["run_id"]) == selected_run_id), None)
+        if selected_run_id is not None
+        else None
+    )
+
+    run_schools: list[dict[str, object]] = []
+    if selected_run_id is not None:
+        try:
+            run_schools = fetch_run_schools(selected_run_id, limit=3000)
+        except Exception as exc:
+            traceback.print_exc()
+            page_error = page_error or f"Failed to load schools for run #{selected_run_id}: {exc}"
+
+    return render(
+        "report_generate.html",
+        {
+            "request": request,
+            "user": user,
+            "runs": runs,
+            "selected_run": selected_run,
+            "selected_run_id": selected_run_id,
+            "run_schools": run_schools,
+            "selected_school_id": selected_school_id,
+            "report_type": report_type,
+            "report_format": report_format,
+            "error": page_error,
+            "ok": ok,
+        },
+    )
+
+
 @router.get("/reports/generate")
-def report_generate(request: Request, db: Session = Depends(get_db)):
-    user = require_user(request, db)
-    return render("report_generate.html", {"request": request, "user": user})
+def report_generate(
+    request: Request,
+    run_id: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    user = get_current_user(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    selected_run_id = _parse_optional_int(run_id)
+    return _render_report_generate_page(
+        request=request,
+        user=user,
+        selected_run_id=selected_run_id,
+    )
+
+
+@router.post("/reports/generate")
+def report_generate_action(
+    request: Request,
+    run_id: str = Form(""),
+    school_id: str = Form(""),
+    report_type: str = Form("standard"),
+    report_format: str = Form("json"),
+    db: Session = Depends(get_db),
+):
+    user = get_current_user(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    run_id_value = _parse_optional_int(run_id)
+    school_id_value = _parse_optional_int(school_id)
+
+    if run_id_value is None:
+        return _render_report_generate_page(
+            request=request,
+            user=user,
+            selected_run_id=None,
+            selected_school_id=school_id_value,
+            report_type=report_type,
+            report_format=report_format,
+            error="Select run_id.",
+        )
+
+    try:
+        created_count = create_reports_for_run(
+            run_id=run_id_value,
+            created_by=user.login,
+            report_type=report_type,
+            report_format=report_format,
+            school_id=school_id_value,
+        )
+    except Exception:
+        traceback.print_exc()
+        return _render_report_generate_page(
+            request=request,
+            user=user,
+            selected_run_id=run_id_value,
+            selected_school_id=school_id_value,
+            report_type=report_type,
+            report_format=report_format,
+            error="Failed to generate report. Check application log.",
+        )
+
+    if created_count <= 0:
+        return _render_report_generate_page(
+            request=request,
+            user=user,
+            selected_run_id=run_id_value,
+            selected_school_id=school_id_value,
+            report_type=report_type,
+            report_format=report_format,
+            error="No schools found for selected run_id.",
+        )
+
+    return RedirectResponse(
+        f"/reports/archive?generated={created_count}&run_id={run_id_value}",
+        status_code=303,
+    )
+
+
+@router.get("/reports/run/{run_id}/export")
+def report_run_export(request: Request, run_id: int, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    payload = fetch_run_export_data(run_id)
+    if payload is None:
+        return RedirectResponse("/reports/generate", status_code=303)
+
+    meta = payload["meta"]
+    ranking_rows = payload["ranking_rows"]
+    filter_rows = payload["filter_rows"]
+    weight_rows = payload["weight_rows"]
+
+    ranking_df = pd.DataFrame(ranking_rows)
+    if ranking_df.empty:
+        ranking_df = pd.DataFrame(
+            columns=[
+                "rank_pos",
+                "school_id",
+                "full_name",
+                "region_name",
+                "municipality_name",
+                "total_score",
+                "students_cnt",
+                "ege_avg_all",
+            ]
+        )
+
+    filters_df = pd.DataFrame(filter_rows)
+    if filters_df.empty:
+        filters_df = pd.DataFrame(
+            columns=[
+                "filter_type",
+                "region_id",
+                "municipality_id",
+                "institute_id",
+                "profile_id",
+                "program_id",
+                "subject_id",
+                "school_id",
+                "min_score",
+            ]
+        )
+
+    weights_df = pd.DataFrame(weight_rows)
+    if weights_df.empty:
+        weights_df = pd.DataFrame(columns=["metric_code", "weight", "is_primary"])
+
+    meta_items = []
+    for key, value in meta.items():
+        if isinstance(value, (dict, list)):
+            value_repr = json.dumps(value, ensure_ascii=False)
+        else:
+            value_repr = value
+        meta_items.append({"key": key, "value": value_repr})
+    meta_df = pd.DataFrame(meta_items)
+    ranking_df = _prepare_df_for_excel(ranking_df)
+    filters_df = _prepare_df_for_excel(filters_df)
+    weights_df = _prepare_df_for_excel(weights_df)
+    meta_df = _prepare_df_for_excel(meta_df)
+
+    out = io.BytesIO()
+    with pd.ExcelWriter(out, engine="openpyxl") as writer:
+        ranking_df.to_excel(writer, index=False, sheet_name="rating_run")
+        filters_df.to_excel(writer, index=False, sheet_name="filters")
+        weights_df.to_excel(writer, index=False, sheet_name="weights")
+        meta_df.to_excel(writer, index=False, sheet_name="meta")
+    out.seek(0)
+
+    headers = {"Content-Disposition": f"attachment; filename=rating_run_{run_id}.xlsx"}
+    return StreamingResponse(
+        out,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
+
+
+@router.get("/reports/report/{report_id}/export")
+def report_payload_export(request: Request, report_id: int, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    payload = get_report_payload(report_id)
+    if payload is None:
+        return RedirectResponse("/reports/archive", status_code=303)
+
+    report_format = str(payload.get("report_format") or "json").strip().lower()
+    report_payload = payload.get("report_payload") or {}
+    if report_format == "xlsx":
+        summary_df = pd.DataFrame(
+            [
+                {"key": "report_id", "value": payload.get("report_id")},
+                {"key": "generated_at", "value": payload.get("generated_at")},
+                {"key": "report_type", "value": payload.get("report_type")},
+                {"key": "report_format", "value": payload.get("report_format")},
+                {"key": "run_id", "value": payload.get("run_id")},
+                {"key": "school_id", "value": payload.get("school_id")},
+                {"key": "full_name", "value": payload.get("full_name")},
+            ]
+        )
+
+        payload_df = pd.json_normalize(report_payload, sep=".")
+        if payload_df.empty:
+            payload_df = pd.DataFrame([{"payload_json": json.dumps(report_payload, ensure_ascii=False, default=str)}])
+        summary_df = _prepare_df_for_excel(summary_df)
+        payload_df = _prepare_df_for_excel(payload_df)
+
+        out = io.BytesIO()
+        with pd.ExcelWriter(out, engine="openpyxl") as writer:
+            summary_df.to_excel(writer, index=False, sheet_name="summary")
+            payload_df.to_excel(writer, index=False, sheet_name="payload")
+        out.seek(0)
+        headers = {"Content-Disposition": f"attachment; filename=school_report_{report_id}.xlsx"}
+        return StreamingResponse(
+            out,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers=headers,
+        )
+
+    content = json.dumps(report_payload, ensure_ascii=False, indent=2, default=str).encode("utf-8")
+    out = io.BytesIO(content)
+    out.seek(0)
+    headers = {"Content-Disposition": f"attachment; filename=school_report_{report_id}.json"}
+    return StreamingResponse(
+        out,
+        media_type="application/json; charset=utf-8",
+        headers=headers,
+    )
 
 
 @router.get("/reports/archive")
-def report_archive(request: Request, db: Session = Depends(get_db)):
-    user = require_user(request, db)
-    jobs = db.query(ImportJob).order_by(ImportJob.created_at.desc()).limit(50).all()
-    return render("report_archive.html", {"request": request, "user": user, "jobs": jobs})
+def report_archive(
+    request: Request,
+    generated: str | None = Query(default=None),
+    run_id: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    user = get_current_user(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    generated_value = _parse_optional_int(generated)
+    run_id_value = _parse_optional_int(run_id)
+    reports = fetch_report_archive_rows(limit=300)
+    ok_message: str | None = None
+    if generated_value is not None and generated_value > 0 and run_id_value is not None:
+        ok_message = f"\u0421\u0444\u043e\u0440\u043c\u0438\u0440\u043e\u0432\u0430\u043d\u043e \u043e\u0442\u0447\u0435\u0442\u043e\u0432: {generated_value} (run_id={run_id_value})."
+    return render(
+        "report_archive.html",
+        {
+            "request": request,
+            "user": user,
+            "reports": reports,
+            "ok_message": ok_message,
+        },
+    )
 
 
 @router.get("/reports/calc-history")
 def calc_history(request: Request, db: Session = Depends(get_db)):
-    user = require_user(request, db)
-    return render("calc_history.html", {"request": request, "user": user})
+    user = get_current_user(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    rows = fetch_calc_history_rows(limit=400)
+    return render(
+        "calc_history.html",
+        {
+            "request": request,
+            "user": user,
+            "rows": rows,
+        },
+    )
 
 
-# 7 Администрирование (только admin)
+# 7 РђРґРјРёРЅРёСЃС‚СЂРёСЂРѕРІР°РЅРёРµ (С‚РѕР»СЊРєРѕ admin)
 @router.get("/admin")
 def admin_home(request: Request, db: Session = Depends(get_db)):
     user = require_admin(request, db)
@@ -1727,7 +2137,7 @@ def admin_home(request: Request, db: Session = Depends(get_db)):
 @router.get("/admin/roles")
 def admin_roles(request: Request, db: Session = Depends(get_db)):
     user = require_admin(request, db)
-    return render("stub_page.html", {"request": request, "user": user, "title": "Роли и права", "back_url": "/admin"})
+    return render("stub_page.html", {"request": request, "user": user, "title": "Р РѕР»Рё Рё РїСЂР°РІР°", "back_url": "/admin"})
 
 
 @router.get("/admin/directories")
@@ -1739,4 +2149,5 @@ def admin_directories(request: Request, db: Session = Depends(get_db)):
 @router.get("/admin/methodologies")
 def admin_methodologies(request: Request, db: Session = Depends(get_db)):
     user = require_admin(request, db)
-    return render("stub_page.html", {"request": request, "user": user, "title": "Методики", "back_url": "/admin"})
+    return render("stub_page.html", {"request": request, "user": user, "title": "РњРµС‚РѕРґРёРєРё", "back_url": "/admin"})
+
