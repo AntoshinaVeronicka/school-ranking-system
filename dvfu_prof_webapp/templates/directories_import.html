@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Справочники</h1>
+
+<div class="card">
+  <h2>Загрузка справочников из Excel</h2>
+  <form method="post" action="/data/directories/load" enctype="multipart/form-data">
+    <div class="row">
+      <label class="grow">Тип загрузки
+        <select name="loader_type" required>
+          <option value="schools" {% if loader_form.loader_type == "schools" %}selected{% endif %}>
+            Регион / Муниципальное образование / Школа / Профиль
+          </option>
+          <option value="programs" {% if loader_form.loader_type == "programs" %}selected{% endif %}>
+            Направления и требования по ВИ
+          </option>
+        </select>
+      </label>
+      <label>Лист (имя или номер)
+        <input name="sheet" value="{{ loader_form.sheet }}" placeholder="Если пусто — первый лист">
+      </label>
+      <label class="grow">Файл Excel (.xlsx/.xls)
+        <input name="file" type="file" accept=".xlsx,.xls" required>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="checkbox-row">
+        <input name="dry_run" type="checkbox" {% if loader_form.dry_run %}checked{% endif %}>
+        <span>Dry-run (без записи в БД)</span>
+      </label>
+      <label class="checkbox-row">
+        <input name="create_missing_subjects" type="checkbox" {% if loader_form.create_missing_subjects %}checked{% endif %}>
+        <span>Создать отсутствующие предметы (для требований по ВИ)</span>
+      </label>
+    </div>
+
+    {% if loader_error %}
+      <div class="alert">{{ loader_error }}</div>
+    {% endif %}
+    {% if loader_ok %}
+      <div class="ok">{{ loader_ok }}</div>
+    {% endif %}
+
+    <div class="row">
+      <button class="btn" type="submit">Запустить загрузку</button>
+      <a class="btn btn-ghost" href="/data">Назад</a>
+    </div>
+  </form>
+</div>
+
+{% if loader_output %}
+  <div class="card">
+    <h2>Диалог загрузчика</h2>
+    <pre class="log-block">{{ loader_output }}</pre>
+  </div>
+{% endif %}
+
+<div class="card">
+  <h2>Обновление минимальных баллов по предметам ЕГЭ</h2>
+  <form method="post" action="/data/directories/min-scores">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Предмет</th>
+          <th>Минимальный балл</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in subject_scores %}
+        <tr>
+          <td>{{ row.subject_id }}</td>
+          <td>{{ row.name }}</td>
+          <td>
+            <input
+              name="score_{{ row.subject_id }}"
+              type="number"
+              min="0"
+              max="100"
+              value="{{ row.min_passing_score }}"
+              required
+            >
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    {% if scores_error %}
+      <div class="alert">{{ scores_error }}</div>
+    {% endif %}
+    {% if scores_ok %}
+      <div class="ok">{{ scores_ok }}</div>
+    {% endif %}
+
+    <div class="row">
+      <button class="btn" type="submit">Обновить минимальные баллы</button>
+    </div>
+  </form>
+</div>
+
+{% if scores_output %}
+  <div class="card">
+    <h2>Результат обновления баллов</h2>
+    <pre class="log-block">{{ scores_output }}</pre>
+  </div>
+{% endif %}
+{% endblock %}

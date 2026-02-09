@@ -218,8 +218,16 @@ def resolve_fixed_cols_flat(df: pd.DataFrame) -> Tuple[str, str, Optional[str], 
 
 
 def clean_common_rows(out: pd.DataFrame) -> pd.DataFrame:
-    out["municipality"] = out["municipality"].map(norm_spaces)
-    out["school"] = out["school"].map(norm_spaces).map(standardize_school_name)
+    # Приводим NaN/None к пустому значению до текстовой нормализации.
+    out["municipality"] = out["municipality"].map(
+        lambda v: "" if v is None or (isinstance(v, float) and pd.isna(v)) else norm_spaces(v)
+    )
+    out["school"] = out["school"].map(
+        lambda v: "" if v is None or (isinstance(v, float) and pd.isna(v)) else norm_spaces(v)
+    )
+    out["municipality"] = out["municipality"].replace({"nan": "", "none": "", "nat": ""})
+    out["school"] = out["school"].replace({"nan": "", "none": "", "nat": ""})
+    out["school"] = out["school"].map(standardize_school_name)
 
     # фильтры мусора
     out = out[(out["municipality"] != "") & (out["school"] != "")]
@@ -295,6 +303,9 @@ def read_actual_excel(path: Path, sheet: str) -> pd.DataFrame:
             "graduates_total": df[grads_t],
         }
     )
+
+    # В фактических таблицах муниципалитет часто объединён и заполнен только в первой строке блока.
+    out["municipality"] = out["municipality"].ffill()
 
     for col in df.columns:
         if str(col[0]).strip().casefold() != "из них":
@@ -402,22 +413,43 @@ def fetch_schools(cur, region_name: Optional[str]) -> List[SchoolRow]:
 
 def build_school_index(
     schools: List[SchoolRow],
-) -> Tuple[Dict[Tuple[str, str], int], Dict[str, int], set[Tuple[str, str]], set[str]]:
+) -> Tuple[
+    Dict[Tuple[str, str], int],
+    Dict[Tuple[str, str], int],
+    Dict[str, int],
+    set[Tuple[str, str]],
+    set[Tuple[str, str]],
+    set[str],
+]:
     """
     Возвращает:
+    - pair_exact_unique[(municipality_text, school_key)] = school_id (если уникально)
     - pair_unique[(muni_key, school_key)] = school_id (если уникально)
     - school_unique[school_key] = school_id (если уникально по всей выборке)
+    - pair_exact_ambiguous: точные пары municipality_text + school_key с несколькими school_id
     - pair_ambiguous: пары с несколькими school_id
     - school_ambiguous: school_key с несколькими school_id
     """
+    pair_exact_ids: Dict[Tuple[str, str], List[int]] = {}
     pair_ids: Dict[Tuple[str, str], List[int]] = {}
     school_ids: Dict[str, List[int]] = {}
 
     for s in schools:
         sk = make_school_key(s.full_name)
+        mk_exact = norm_spaces(s.municipality_name or "")
         mk = make_muni_key(s.municipality_name or "")
+        pair_exact_ids.setdefault((mk_exact, sk), []).append(s.school_id)
         pair_ids.setdefault((mk, sk), []).append(s.school_id)
         school_ids.setdefault(sk, []).append(s.school_id)
+
+    pair_exact_unique: Dict[Tuple[str, str], int] = {}
+    pair_exact_amb: set[Tuple[str, str]] = set()
+    for k, ids in pair_exact_ids.items():
+        uniq = sorted(set(ids))
+        if len(uniq) == 1:
+            pair_exact_unique[k] = uniq[0]
+        else:
+            pair_exact_amb.add(k)
 
     pair_unique: Dict[Tuple[str, str], int] = {}
     pair_amb: set[Tuple[str, str]] = set()
@@ -437,7 +469,7 @@ def build_school_index(
         else:
             school_amb.add(k)
 
-    return pair_unique, school_unique, pair_amb, school_amb
+    return pair_exact_unique, pair_unique, school_unique, pair_exact_amb, pair_amb, school_amb
 
 
 # -------------------- upsert --------------------
@@ -557,7 +589,7 @@ def load_ege_to_db(
             # справочники
             subject_name_to_id = fetch_subject_map(cur)
             schools = fetch_schools(cur, region_name=region_name)
-            pair_unique, school_unique, pair_amb, school_amb = build_school_index(schools)
+            pair_exact_unique, pair_unique, school_unique, pair_exact_amb, pair_amb, school_amb = build_school_index(schools)
 
             # аккумулируем по school_id
             per_school_grads: Dict[int, int] = {}
@@ -576,13 +608,15 @@ def load_ege_to_db(
                 mk = make_muni_key(mun)
                 sk = make_school_key(sch)
 
-                sid = pair_unique.get((mk, sk))
+                sid = pair_exact_unique.get((mun, sk))
+                if sid is None:
+                    sid = pair_unique.get((mk, sk))
                 if sid is None:
                     sid = school_unique.get(sk)
 
                 if sid is None:
                     # различаем "не нашли" и "неоднозначно"
-                    if (mk, sk) in pair_amb or sk in school_amb:
+                    if (mun, sk) in pair_exact_amb or (mk, sk) in pair_amb or sk in school_amb:
                         skipped_ambiguous += 1
                         logging.warning("Неоднозначная школа: municipality='%s' school='%s'", mun, sch)
                     else:

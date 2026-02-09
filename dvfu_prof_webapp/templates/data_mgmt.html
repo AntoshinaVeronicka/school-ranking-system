@@ -1,16 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>1. Главное меню</h1>
+<h1>Управление данными</h1>
 
 <div class="grid">
-  <a class="tile" href="/data">2. Данные и загрузки</a>
-  <a class="tile" href="/search">3. Поиск школ</a>
-  <a class="tile" href="/rating/profile">4. Подбор и рейтинг</a>
-  <a class="tile" href="/settings">5. Настройки анализа</a>
-  <a class="tile" href="/reports/generate">6. Выгрузка / отчёт</a>
-  <a class="tile" href="/reports/calc-history">6.2 История расчётов</a>
-  {% if user.is_admin %}
-    <a class="tile" href="/admin">7. Администрирование</a>
-  {% endif %}
+  <a class="tile" href="/data/ege">Импорт ЕГЭ</a>
+  <a class="tile" href="/data/admissions">Импорт приёма</a>
+  <a class="tile" href="/data/events">Импорт профориентации</a>
+  <a class="tile" href="/data/directories">Справочники</a>
+</div>
+
+<div class="row">
+  <a class="btn btn-ghost" href="/">В меню</a>
 </div>
 {% endblock %}

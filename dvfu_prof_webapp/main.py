@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
+import traceback
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -20,27 +23,45 @@ from starlette.middleware.sessions import SessionMiddleware
 
 
 
-# Настройки (можно вынести в .env, но для КП достаточно так)
-APP_NAME = "DVFU – Профориентации и анализ школ"
+# РќР°СЃС‚СЂРѕР№РєРё (РјРѕР¶РЅРѕ РІС‹РЅРµСЃС‚Рё РІ .env, РЅРѕ РґР»СЏ РљРџ РґРѕСЃС‚Р°С‚РѕС‡РЅРѕ С‚Р°Рє)
+APP_NAME = "DVFU вЂ“ РџСЂРѕС„РѕСЂРёРµРЅС‚Р°С†РёРё Рё Р°РЅР°Р»РёР· С€РєРѕР»"
 SECRET_KEY = "CHANGE_ME"
 DATABASE_URL = "sqlite:///./app.db"
 UPLOAD_DIR = "./uploads"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+LOAD_EGE_SCRIPT = PROJECT_ROOT / "load" / "load_ege_to_db.py"
+LOAD_SCHOOLS_SCRIPT = PROJECT_ROOT / "load" / "load_schools_to_db.py"
+LOAD_PROGRAMS_SCRIPT = PROJECT_ROOT / "load" / "load_programs_requirements.py"
+
+DEFAULT_EGE_SUBJECT_SCORES = [
+    {"subject_id": 1, "name": "Русский язык", "min_passing_score": 40},
+    {"subject_id": 2, "name": "Математика", "min_passing_score": 40},
+    {"subject_id": 3, "name": "Физика", "min_passing_score": 41},
+    {"subject_id": 4, "name": "Обществознание", "min_passing_score": 45},
+    {"subject_id": 5, "name": "История", "min_passing_score": 40},
+    {"subject_id": 6, "name": "ИКТ", "min_passing_score": 46},
+    {"subject_id": 7, "name": "Иностранный язык", "min_passing_score": 40},
+    {"subject_id": 8, "name": "Литература", "min_passing_score": 40},
+    {"subject_id": 9, "name": "Биология", "min_passing_score": 40},
+    {"subject_id": 10, "name": "География", "min_passing_score": 40},
+    {"subject_id": 11, "name": "Химия", "min_passing_score": 40},
+]
 
 DEFAULT_ADMIN_LOGIN = "admin"
 DEFAULT_ADMIN_PASSWORD = "admin"
 
 REQUIRED_EGE_COLUMNS = {
-    "Муниципальное образование",
-    "Образовательная организация (школа)",
-    "Год",
-    "Предмет",
-    "Средний балл",
-    "Количество выпускников",
+    "РњСѓРЅРёС†РёРїР°Р»СЊРЅРѕРµ РѕР±СЂР°Р·РѕРІР°РЅРёРµ",
+    "РћР±СЂР°Р·РѕРІР°С‚РµР»СЊРЅР°СЏ РѕСЂРіР°РЅРёР·Р°С†РёСЏ (С€РєРѕР»Р°)",
+    "Р“РѕРґ",
+    "РџСЂРµРґРјРµС‚",
+    "РЎСЂРµРґРЅРёР№ Р±Р°Р»Р»",
+    "РљРѕР»РёС‡РµСЃС‚РІРѕ РІС‹РїСѓСЃРєРЅРёРєРѕРІ",
 }
 
 
 
-# База данных
+# Р‘Р°Р·Р° РґР°РЅРЅС‹С…
 
 class Base(DeclarativeBase):
     pass
@@ -124,7 +145,7 @@ class ProgramRequirement(Base):
 
 
 
-# Безопасность / сессии
+# Р‘РµР·РѕРїР°СЃРЅРѕСЃС‚СЊ / СЃРµСЃСЃРёРё
 pwd = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 
@@ -158,7 +179,7 @@ def require_admin(request: Request, db: Session) -> User:
 
 
 
-# Расчёты (демо)
+# Р Р°СЃС‡С‘С‚С‹ (РґРµРјРѕ)
 def subjects_for_program(db: Session, program_id: int) -> list[str]:
     rows = db.execute(select(ProgramRequirement.subject).where(ProgramRequirement.program_id == program_id)).all()
     return [r[0] for r in rows]
@@ -168,7 +189,7 @@ def calculate_school_metrics(db: Session, school_ids: list[int], year: int, prog
     if not school_ids:
         return []
 
-    # В реальной модели выпускники хранятся отдельно; здесь эвристика: max(graduates) по предметам
+    # Р’ СЂРµР°Р»СЊРЅРѕР№ РјРѕРґРµР»Рё РІС‹РїСѓСЃРєРЅРёРєРё С…СЂР°РЅСЏС‚СЃСЏ РѕС‚РґРµР»СЊРЅРѕ; Р·РґРµСЃСЊ СЌРІСЂРёСЃС‚РёРєР°: max(graduates) РїРѕ РїСЂРµРґРјРµС‚Р°Рј
     subq = (
         select(
             EgeStat.school_id.label("school_id"),
@@ -229,7 +250,7 @@ def rank_schools(metrics: list[dict[str, Any]], w_graduates: float, w_avg_score:
     return ranked
 
 
-# Импорт ЕГЭ (Excel) – реализовано
+# РРјРїРѕСЂС‚ Р•Р“Р­ (Excel) вЂ“ СЂРµР°Р»РёР·РѕРІР°РЅРѕ
 def validate_ege_xlsx(path: str) -> tuple[bool, list[str]]:
     df = pd.read_excel(path)
     cols = set(str(c).strip() for c in df.columns)
@@ -240,19 +261,19 @@ def validate_ege_xlsx(path: str) -> tuple[bool, list[str]]:
 def load_ege_xlsx(db: Session, path: str, region: str) -> dict[str, int]:
     df = pd.read_excel(path)
     df = df.rename(columns={c: str(c).strip() for c in df.columns})
-    df = df.dropna(subset=["Образовательная организация (школа)", "Муниципальное образование", "Год", "Предмет"])
+    df = df.dropna(subset=["РћР±СЂР°Р·РѕРІР°С‚РµР»СЊРЅР°СЏ РѕСЂРіР°РЅРёР·Р°С†РёСЏ (С€РєРѕР»Р°)", "РњСѓРЅРёС†РёРїР°Р»СЊРЅРѕРµ РѕР±СЂР°Р·РѕРІР°РЅРёРµ", "Р“РѕРґ", "РџСЂРµРґРјРµС‚"])
 
     inserted_schools = 0
     inserted_stats = 0
     updated_stats = 0
 
     for _, row in df.iterrows():
-        municipality = str(row["Муниципальное образование"]).strip()
-        name = str(row["Образовательная организация (школа)"]).strip()
-        year = int(row["Год"])
-        subject = str(row["Предмет"]).strip()
-        avg_score = float(row["Средний балл"])
-        graduates = int(row["Количество выпускников"])
+        municipality = str(row["РњСѓРЅРёС†РёРїР°Р»СЊРЅРѕРµ РѕР±СЂР°Р·РѕРІР°РЅРёРµ"]).strip()
+        name = str(row["РћР±СЂР°Р·РѕРІР°С‚РµР»СЊРЅР°СЏ РѕСЂРіР°РЅРёР·Р°С†РёСЏ (С€РєРѕР»Р°)"]).strip()
+        year = int(row["Р“РѕРґ"])
+        subject = str(row["РџСЂРµРґРјРµС‚"]).strip()
+        avg_score = float(row["РЎСЂРµРґРЅРёР№ Р±Р°Р»Р»"])
+        graduates = int(row["РљРѕР»РёС‡РµСЃС‚РІРѕ РІС‹РїСѓСЃРєРЅРёРєРѕРІ"])
 
         school = db.query(School).filter_by(region=region, municipality=municipality, name=name).one_or_none()
         if school is None:
@@ -275,7 +296,210 @@ def load_ege_xlsx(db: Session, path: str, region: str) -> dict[str, int]:
     return {"inserted_schools": inserted_schools, "inserted_stats": inserted_stats, "updated_stats": updated_stats}
 
 
-# Шаблоны (Jinja2)
+# РЁР°Р±Р»РѕРЅС‹ (Jinja2)
+def default_ege_form() -> dict[str, Any]:
+    return {"region": "", "kind": "actual", "sheet": "", "year": "", "dry_run": False}
+
+
+def parse_year_value(raw: str) -> int | None:
+    value = raw.strip()
+    if not value:
+        return None
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ValueError("РџРѕР»Рµ 'Р“РѕРґ' РґРѕР»Р¶РЅРѕ Р±С‹С‚СЊ С‡РёСЃР»РѕРј.") from exc
+
+
+def resolve_sheet_name(path: Path, requested: str) -> tuple[str, list[str]]:
+    with pd.ExcelFile(path, engine="openpyxl") as xls:
+        sheets = list(xls.sheet_names)
+    if not sheets:
+        raise ValueError("Р’ С„Р°Р№Р»Рµ РѕС‚СЃСѓС‚СЃС‚РІСѓСЋС‚ Р»РёСЃС‚С‹ Excel.")
+
+    value = requested.strip()
+    if not value:
+        return sheets[0], sheets
+
+    if value.isdigit():
+        idx = int(value)
+        if 1 <= idx <= len(sheets):
+            return sheets[idx - 1], sheets
+        if idx == 0:
+            return sheets[0], sheets
+
+    for sheet in sheets:
+        if sheet.casefold() == value.casefold():
+            return sheet, sheets
+
+    raise ValueError(f"Р›РёСЃС‚ '{value}' РЅРµ РЅР°Р№РґРµРЅ. Р”РѕСЃС‚СѓРїРЅС‹Рµ Р»РёСЃС‚С‹: {', '.join(sheets)}")
+
+
+def infer_year_from_sheet_name(sheet_name: str) -> int | None:
+    if str(LOAD_EGE_SCRIPT.parent) not in sys.path:
+        sys.path.insert(0, str(LOAD_EGE_SCRIPT.parent))
+    from load_ege_to_db import infer_year_from_sheet
+
+    return infer_year_from_sheet(sheet_name)
+
+
+def run_ege_loader_script(
+    *,
+    file_path: Path,
+    kind: str,
+    sheet: str,
+    year: int,
+    region: str | None,
+    dry_run: bool,
+) -> tuple[bool, str]:
+    cmd = [
+        sys.executable,
+        str(LOAD_EGE_SCRIPT),
+        "--file",
+        str(file_path.resolve()),
+        "--kind",
+        kind,
+        "--sheet",
+        sheet,
+        "--year",
+        str(year),
+    ]
+    if region:
+        cmd.extend(["--region", region])
+    if dry_run:
+        cmd.append("--dry-run")
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "Р—Р°РіСЂСѓР·РєР° РїСЂРµСЂРІР°РЅР° РїРѕ С‚Р°Р№Рј-Р°СѓС‚Сѓ (РїСЂРµРІС‹С€РµРЅРѕ 300 СЃРµРєСѓРЅРґ)."
+    except Exception:
+        return False, traceback.format_exc()
+
+    output_parts = [part.strip() for part in [proc.stdout, proc.stderr] if part and part.strip()]
+    output_text = "\n\n".join(output_parts) if output_parts else "(РЎРєСЂРёРїС‚ Р·Р°РІРµСЂС€РёР»СЃСЏ Р±РµР· РІС‹РІРѕРґР°.)"
+    return proc.returncode == 0, output_text
+
+
+def run_script_with_output(
+    script_path: Path,
+    args: list[str],
+    timeout_seconds: int = 300,
+) -> tuple[bool, str]:
+    cmd = [sys.executable, str(script_path), *args]
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"Выполнение прервано по тайм-ауту ({timeout_seconds} секунд)."
+    except Exception:
+        return False, traceback.format_exc()
+
+    output_parts = [part.strip() for part in [proc.stdout, proc.stderr] if part and part.strip()]
+    output_text = "\n\n".join(output_parts) if output_parts else "(Скрипт завершился без вывода.)"
+    return proc.returncode == 0, output_text
+
+
+def default_directories_form() -> dict[str, Any]:
+    return {
+        "loader_type": "schools",
+        "sheet": "",
+        "dry_run": False,
+        "create_missing_subjects": False,
+    }
+
+
+def default_subject_scores() -> list[dict[str, Any]]:
+    return [dict(item) for item in DEFAULT_EGE_SUBJECT_SCORES]
+
+
+def get_load_db_config() -> dict[str, Any]:
+    if str(LOAD_EGE_SCRIPT.parent) not in sys.path:
+        sys.path.insert(0, str(LOAD_EGE_SCRIPT.parent))
+    from load_common import get_db_config
+
+    return get_db_config(search_from=LOAD_EGE_SCRIPT.parent)
+
+
+def get_subject_scores_from_db() -> list[dict[str, Any]]:
+    defaults = default_subject_scores()
+    default_by_id = {item["subject_id"]: item for item in defaults}
+    default_ids = [item["subject_id"] for item in defaults]
+    try:
+        import psycopg2
+
+        db_cfg = get_load_db_config()
+        with psycopg2.connect(**db_cfg) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT subject_id, name, min_passing_score
+                    FROM edu.ege_subject
+                    WHERE subject_id = ANY(%s)
+                    ORDER BY subject_id
+                    """,
+                    (default_ids,),
+                )
+                rows = cur.fetchall()
+        if not rows:
+            return defaults
+
+        db_by_id: dict[int, dict[str, Any]] = {}
+        for subject_id, name, min_score in rows:
+            db_by_id[int(subject_id)] = {
+                "name": str(name),
+                "min_passing_score": min_score,
+            }
+
+        result: list[dict[str, Any]] = []
+        for subject_id in default_ids:
+            default_item = default_by_id[subject_id]
+            db_item = db_by_id.get(subject_id)
+            if db_item is None:
+                result.append(dict(default_item))
+                continue
+
+            score_value = db_item["min_passing_score"]
+            if score_value is None:
+                score_value = default_item["min_passing_score"]
+
+            result.append(
+                {
+                    "subject_id": subject_id,
+                    "name": db_item["name"] or str(default_item["name"]),
+                    "min_passing_score": int(score_value) if score_value is not None else 0,
+                }
+            )
+        return result
+    except Exception:
+        return defaults
+
+
+def apply_subject_scores_from_form(
+    base_rows: list[dict[str, Any]],
+    form_values: dict[str, str],
+) -> list[dict[str, Any]]:
+    rows = [dict(row) for row in base_rows]
+    for row in rows:
+        key = f"score_{row['subject_id']}"
+        if key in form_values:
+            raw = form_values[key].strip()
+            if raw:
+                row["min_passing_score"] = raw
+    return rows
+
+
 templates_env = Environment(
     loader=FileSystemLoader("templates"),
     autoescape=select_autoescape(["html", "xml"]),
@@ -288,7 +512,7 @@ def render(template_name: str, context: dict[str, Any]) -> HTMLResponse:
     return HTMLResponse(html)
 
 
-# Приложение
+# РџСЂРёР»РѕР¶РµРЅРёРµ
 app = FastAPI(title=APP_NAME, default_response_class=HTMLResponse)
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
 
@@ -309,16 +533,16 @@ def init_db():
             ))
             db.commit()
 
-        # seed one program (для демонстрации рейтинга)
-        program = db.query(StudyProgram).filter(StudyProgram.name == "Прикладная информатика").one_or_none()
+        # seed one program (РґР»СЏ РґРµРјРѕРЅСЃС‚СЂР°С†РёРё СЂРµР№С‚РёРЅРіР°)
+        program = db.query(StudyProgram).filter(StudyProgram.name == "РџСЂРёРєР»Р°РґРЅР°СЏ РёРЅС„РѕСЂРјР°С‚РёРєР°").one_or_none()
         if program is None:
-            program = StudyProgram(institute="ИМКТ", name="Прикладная информатика")
+            program = StudyProgram(institute="РРњРљРў", name="РџСЂРёРєР»Р°РґРЅР°СЏ РёРЅС„РѕСЂРјР°С‚РёРєР°")
             db.add(program)
             db.flush()
             db.add_all([
-                ProgramRequirement(program_id=program.id, subject="Русский язык", role="required", min_score=40),
-                ProgramRequirement(program_id=program.id, subject="Математика", role="required", min_score=40),
-                ProgramRequirement(program_id=program.id, subject="Информатика", role="required", min_score=40),
+                ProgramRequirement(program_id=program.id, subject="Р СѓСЃСЃРєРёР№ СЏР·С‹Рє", role="required", min_score=40),
+                ProgramRequirement(program_id=program.id, subject="РњР°С‚РµРјР°С‚РёРєР°", role="required", min_score=40),
+                ProgramRequirement(program_id=program.id, subject="РРЅС„РѕСЂРјР°С‚РёРєР°", role="required", min_score=40),
             ])
             db.commit()
     finally:
@@ -328,7 +552,7 @@ def init_db():
 init_db()
 
 
-# 0 Вход / 0.1 Восстановление / 1 Меню / 1.1 Выход
+# 0 Р’С…РѕРґ / 0.1 Р’РѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРёРµ / 1 РњРµРЅСЋ / 1.1 Р’С‹С…РѕРґ
 @app.get("/")
 def main_menu(request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
@@ -351,7 +575,7 @@ def login_action(
 ):
     user = db.query(User).filter(User.login == login).one_or_none()
     if user is None or not verify_password(password, user.password_hash):
-        return render("login.html", {"request": request, "user": None, "error": "Неверный логин или пароль."})
+        return render("login.html", {"request": request, "user": None, "error": "РќРµРІРµСЂРЅС‹Р№ Р»РѕРіРёРЅ РёР»Рё РїР°СЂРѕР»СЊ."})
 
     request.session["user_id"] = user.id
     return RedirectResponse("/", status_code=303)
@@ -364,7 +588,7 @@ def recovery_page(request: Request):
 
 @app.post("/recovery")
 def recovery_action(request: Request, login: str = Form(...)):
-    info = f"Запрос на восстановление для пользователя «{login}» зарегистрирован (демо-режим)."
+    info = f"Р—Р°РїСЂРѕСЃ РЅР° РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРёРµ РґР»СЏ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ В«{login}В» Р·Р°СЂРµРіРёСЃС‚СЂРёСЂРѕРІР°РЅ (РґРµРјРѕ-СЂРµР¶РёРј)."
     return render("recovery.html", {"request": request, "user": None, "info": info})
 
 
@@ -374,7 +598,7 @@ def logout(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 
-# 2 Данные и загрузки
+# 2 Р”Р°РЅРЅС‹Рµ Рё Р·Р°РіСЂСѓР·РєРё
 @app.get("/data")
 def data_mgmt(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
@@ -384,21 +608,57 @@ def data_mgmt(request: Request, db: Session = Depends(get_db)):
 @app.get("/data/ege")
 def import_ege_page(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
-    return render("import_ege.html", {"request": request, "user": user, "error": None, "ok": None})
+    return render(
+        "import_ege.html",
+        {
+            "request": request,
+            "user": user,
+            "error": None,
+            "ok": None,
+            "dialog_output": None,
+            "form": default_ege_form(),
+        },
+    )
 
 
 @app.post("/data/ege")
 def import_ege_action(
     request: Request,
-    region: str = Form(...),
+    region: str = Form(""),
+    kind: str = Form("actual"),
+    sheet: str = Form(""),
+    year: str = Form(""),
+    dry_run: str | None = Form(None),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
     user = require_user(request, db)
     Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
 
+    form_state = {
+        "region": region,
+        "kind": kind,
+        "sheet": sheet,
+        "year": year,
+        "dry_run": dry_run is not None,
+    }
+
+    kind_value = kind.strip().lower()
+    if kind_value not in {"plan", "actual"}:
+        return render(
+            "import_ege.html",
+            {
+                "request": request,
+                "user": user,
+                "error": "Тип данных должен быть 'plan' или 'actual'.",
+                "ok": None,
+                "dialog_output": None,
+                "form": form_state,
+            },
+        )
+
     safe_name = file.filename.replace("/", "_").replace("\\", "_")
-    filepath = str(Path(UPLOAD_DIR) / safe_name)
+    filepath = Path(UPLOAD_DIR) / safe_name
 
     content = file.file.read()
     with open(filepath, "wb") as f:
@@ -409,31 +669,432 @@ def import_ege_action(
     db.commit()
     db.refresh(job)
 
-    ok, missing = validate_ege_xlsx(filepath)
-    if not ok:
-        job.status = "error"
-        job.details = f"Missing columns: {missing}"
+    try:
+        sheet_name, available_sheets = resolve_sheet_name(filepath, sheet)
+        year_value = parse_year_value(year)
+        if year_value is None:
+            year_value = infer_year_from_sheet_name(sheet_name)
+        if year_value is None:
+            raise ValueError("Не удалось определить год автоматически. Укажите поле 'Год' вручную.")
+
+        region_value = region.strip() or filepath.stem.replace("_", " ").strip()
+        is_dry_run = dry_run is not None
+
+        dialog_header = [
+            "Параметры запуска:",
+            f"- Файл: {safe_name}",
+            f"- Доступные листы: {', '.join(available_sheets)}",
+            f"- Лист: {sheet_name}",
+            f"- Тип данных: {kind_value}",
+            f"- Год: {year_value}",
+            f"- Регион: {region_value}",
+            f"- Режим: {'dry-run' if is_dry_run else 'запись в БД'}",
+            "",
+            "Вывод скрипта:",
+        ]
+
+        success, script_output = run_ege_loader_script(
+            file_path=filepath,
+            kind=kind_value,
+            sheet=sheet_name,
+            year=year_value,
+            region=region_value,
+            dry_run=is_dry_run,
+        )
+        dialog_output = "\n".join(dialog_header + [script_output])
+
+        job.status = "loaded" if success else "error"
+        job.details = json.dumps(
+            {
+                "kind": kind_value,
+                "sheet": sheet_name,
+                "year": year_value,
+                "region": region_value,
+                "dry_run": is_dry_run,
+                "output": script_output[-12000:],
+            },
+            ensure_ascii=False,
+        )
         db.commit()
-        return render("import_ege.html", {"request": request, "user": user, "error": f"В файле отсутствуют столбцы: {', '.join(missing)}", "ok": None})
 
-    details = load_ege_xlsx(db, filepath, region=region)
-    job.status = "loaded"
-    job.details = json.dumps(details, ensure_ascii=False)
-    db.commit()
+        form_state["sheet"] = sheet_name
+        form_state["year"] = str(year_value)
 
-    return render("import_ege.html", {"request": request, "user": user, "error": None, "ok": f"Импорт выполнен. Результат: {details}"})
+        return render(
+            "import_ege.html",
+            {
+                "request": request,
+                "user": user,
+                "error": None if success else "Загрузка ЕГЭ завершилась с ошибкой. Смотрите лог ниже.",
+                "ok": "Загрузка ЕГЭ выполнена успешно." if success else None,
+                "dialog_output": dialog_output,
+                "form": form_state,
+            },
+        )
+    except Exception as exc:
+        dialog_output = traceback.format_exc()
+        job.status = "error"
+        job.details = json.dumps({"error": str(exc), "traceback": dialog_output[-12000:]}, ensure_ascii=False)
+        db.commit()
+        return render(
+            "import_ege.html",
+            {
+                "request": request,
+                "user": user,
+                "error": str(exc),
+                "ok": None,
+                "dialog_output": dialog_output,
+                "form": form_state,
+            },
+        )
 
 
 @app.get("/data/admissions")
 def import_admissions_page(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
-    return render("stub_page.html", {"request": request, "user": user, "title": "2.2 Импорт приёма", "back_url": "/data"})
+    return render("stub_page.html", {
+        "request": request,
+        "user": user,
+        "title": "РРјРїРѕСЂС‚ РїСЂРёС‘РјР°",
+        "back_url": "/data",
+        "validate_url": "/data/validate",
+    })
 
 
 @app.get("/data/events")
 def import_events_page(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
-    return render("stub_page.html", {"request": request, "user": user, "title": "2.3 Импорт профориентации", "back_url": "/data"})
+    return render("stub_page.html", {
+        "request": request,
+        "user": user,
+        "title": "РРјРїРѕСЂС‚ РїСЂРѕС„РѕСЂРёРµРЅС‚Р°С†РёРё",
+        "back_url": "/data",
+        "validate_url": "/data/validate",
+    })
+
+
+@app.get("/data/directories")
+def directories_page(request: Request, db: Session = Depends(get_db)):
+    user = require_user(request, db)
+    return render(
+        "directories_import.html",
+        {
+            "request": request,
+            "user": user,
+            "loader_form": default_directories_form(),
+            "subject_scores": get_subject_scores_from_db(),
+            "loader_error": None,
+            "loader_ok": None,
+            "loader_output": None,
+            "scores_error": None,
+            "scores_ok": None,
+            "scores_output": None,
+        },
+    )
+
+
+@app.post("/data/directories/load")
+def directories_load_action(
+    request: Request,
+    loader_type: str = Form("schools"),
+    sheet: str = Form(""),
+    dry_run: str | None = Form(None),
+    create_missing_subjects: str | None = Form(None),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    user = require_user(request, db)
+    directories_upload_dir = Path(UPLOAD_DIR) / "directories"
+    directories_upload_dir.mkdir(parents=True, exist_ok=True)
+
+    form_state = {
+        "loader_type": loader_type,
+        "sheet": sheet,
+        "dry_run": dry_run is not None,
+        "create_missing_subjects": create_missing_subjects is not None,
+    }
+
+    if loader_type not in {"schools", "programs"}:
+        return render(
+            "directories_import.html",
+            {
+                "request": request,
+                "user": user,
+                "loader_form": form_state,
+                "subject_scores": get_subject_scores_from_db(),
+                "loader_error": "Неизвестный тип загрузчика.",
+                "loader_ok": None,
+                "loader_output": None,
+                "scores_error": None,
+                "scores_ok": None,
+                "scores_output": None,
+            },
+        )
+
+    safe_name = file.filename.replace("/", "_").replace("\\", "_")
+    filepath = directories_upload_dir / safe_name
+    with open(filepath, "wb") as f:
+        f.write(file.file.read())
+
+    job = ImportJob(
+        job_type="directories",
+        filename=safe_name,
+        status="uploaded",
+        details=json.dumps({"loader_type": loader_type}, ensure_ascii=False),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    try:
+        sheet_name, available_sheets = resolve_sheet_name(filepath, sheet)
+        args: list[str] = [str(filepath.resolve()), "--sheet", sheet_name]
+
+        if loader_type == "schools":
+            script_path = LOAD_SCHOOLS_SCRIPT
+            title = "Загрузка: Регион / Муниципалитет / Школа / Профиль"
+            if dry_run is not None:
+                args.append("--dry-run")
+        else:
+            script_path = LOAD_PROGRAMS_SCRIPT
+            title = "Загрузка: Направления и требования по ВИ"
+            if dry_run is not None:
+                args.append("--dry-run")
+            if create_missing_subjects is not None:
+                args.append("--create-missing-subjects")
+
+        success, script_output = run_script_with_output(script_path, args)
+        loader_output = "\n".join(
+            [
+                f"{title}",
+                f"- Файл: {safe_name}",
+                f"- Доступные листы: {', '.join(available_sheets)}",
+                f"- Лист: {sheet_name}",
+                f"- Dry-run: {'да' if dry_run is not None else 'нет'}",
+                f"- create-missing-subjects: {'да' if create_missing_subjects is not None else 'нет'}",
+                "",
+                "Вывод скрипта:",
+                script_output,
+            ]
+        )
+
+        job.status = "loaded" if success else "error"
+        job.details = json.dumps(
+            {
+                "loader_type": loader_type,
+                "sheet": sheet_name,
+                "dry_run": dry_run is not None,
+                "create_missing_subjects": create_missing_subjects is not None,
+                "output": script_output[-12000:],
+            },
+            ensure_ascii=False,
+        )
+        db.commit()
+
+        form_state["sheet"] = sheet_name
+
+        return render(
+            "directories_import.html",
+            {
+                "request": request,
+                "user": user,
+                "loader_form": form_state,
+                "subject_scores": get_subject_scores_from_db(),
+                "loader_error": None if success else "Загрузка справочников завершилась с ошибкой.",
+                "loader_ok": "Загрузка справочников выполнена успешно." if success else None,
+                "loader_output": loader_output,
+                "scores_error": None,
+                "scores_ok": None,
+                "scores_output": None,
+            },
+        )
+    except Exception as exc:
+        loader_output = traceback.format_exc()
+        job.status = "error"
+        job.details = json.dumps({"error": str(exc), "traceback": loader_output[-12000:]}, ensure_ascii=False)
+        db.commit()
+        return render(
+            "directories_import.html",
+            {
+                "request": request,
+                "user": user,
+                "loader_form": form_state,
+                "subject_scores": get_subject_scores_from_db(),
+                "loader_error": str(exc),
+                "loader_ok": None,
+                "loader_output": loader_output,
+                "scores_error": None,
+                "scores_ok": None,
+                "scores_output": None,
+            },
+        )
+
+
+@app.post("/data/directories/min-scores")
+async def directories_min_scores_action(request: Request, db: Session = Depends(get_db)):
+    user = require_user(request, db)
+    submitted = await request.form()
+    submitted_map = {str(k): str(v) for k, v in submitted.items()}
+
+    rows = apply_subject_scores_from_form(default_subject_scores(), submitted_map)
+    updates: list[tuple[int, str, int]] = []
+    errors: list[str] = []
+
+    for row in rows:
+        subject_id = int(row["subject_id"])
+        name = str(row["name"])
+        raw = str(row["min_passing_score"]).strip()
+        if not raw:
+            errors.append(f"Для предмета '{name}' не заполнен минимальный балл.")
+            continue
+        try:
+            score = int(raw)
+        except ValueError:
+            errors.append(f"Для предмета '{name}' значение '{raw}' не является числом.")
+            continue
+        if score < 0 or score > 100:
+            errors.append(f"Для предмета '{name}' минимальный балл должен быть в диапазоне 0..100.")
+            continue
+        updates.append((subject_id, name, score))
+        row["min_passing_score"] = score
+
+    if errors:
+        return render(
+            "directories_import.html",
+            {
+                "request": request,
+                "user": user,
+                "loader_form": default_directories_form(),
+                "subject_scores": rows,
+                "loader_error": None,
+                "loader_ok": None,
+                "loader_output": None,
+                "scores_error": "\n".join(errors),
+                "scores_ok": None,
+                "scores_output": None,
+            },
+        )
+
+    job = ImportJob(
+        job_type="directories",
+        filename="ege_subject.min_scores",
+        status="uploaded",
+        details=json.dumps({"rows": len(updates)}, ensure_ascii=False),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    try:
+        import psycopg2
+
+        db_cfg = get_load_db_config()
+        updated = 0
+        updated_by_name = 0
+        inserted = 0
+
+        with psycopg2.connect(**db_cfg) as conn:
+            with conn.cursor() as cur:
+                for subject_id, name, score in updates:
+                    cur.execute(
+                        """
+                        UPDATE edu.ege_subject
+                        SET name = %s,
+                            min_passing_score = %s
+                        WHERE subject_id = %s
+                        """,
+                        (name, score, subject_id),
+                    )
+                    if cur.rowcount:
+                        updated += cur.rowcount
+                        continue
+
+                    cur.execute(
+                        """
+                        SELECT subject_id
+                        FROM edu.ege_subject
+                        WHERE name = %s
+                        """,
+                        (name,),
+                    )
+                    existing_by_name = cur.fetchone()
+                    if existing_by_name:
+                        cur.execute(
+                            """
+                            UPDATE edu.ege_subject
+                            SET min_passing_score = %s
+                            WHERE subject_id = %s
+                            """,
+                            (score, int(existing_by_name[0])),
+                        )
+                        updated_by_name += cur.rowcount
+                        continue
+
+                    cur.execute(
+                        """
+                        INSERT INTO edu.ege_subject (subject_id, name, min_passing_score)
+                        VALUES (%s, %s, %s)
+                        """,
+                        (subject_id, name, score),
+                    )
+                    inserted += 1
+            conn.commit()
+
+        score_output = "\n".join(
+            [
+                "Обновление минимальных баллов ЕГЭ:",
+                f"- Обновлено по subject_id: {updated}",
+                f"- Обновлено по name: {updated_by_name}",
+                f"- Вставлено новых строк: {inserted}",
+            ]
+        )
+
+        job.status = "loaded"
+        job.details = json.dumps(
+            {
+                "updated": updated,
+                "updated_by_name": updated_by_name,
+                "inserted": inserted,
+            },
+            ensure_ascii=False,
+        )
+        db.commit()
+
+        return render(
+            "directories_import.html",
+            {
+                "request": request,
+                "user": user,
+                "loader_form": default_directories_form(),
+                "subject_scores": get_subject_scores_from_db(),
+                "loader_error": None,
+                "loader_ok": None,
+                "loader_output": None,
+                "scores_error": None,
+                "scores_ok": "Минимальные баллы обновлены.",
+                "scores_output": score_output,
+            },
+        )
+    except Exception as exc:
+        score_output = traceback.format_exc()
+        job.status = "error"
+        job.details = json.dumps({"error": str(exc), "traceback": score_output[-12000:]}, ensure_ascii=False)
+        db.commit()
+        return render(
+            "directories_import.html",
+            {
+                "request": request,
+                "user": user,
+                "loader_form": default_directories_form(),
+                "subject_scores": rows,
+                "loader_error": None,
+                "loader_ok": None,
+                "loader_output": None,
+                "scores_error": str(exc),
+                "scores_ok": None,
+                "scores_output": score_output,
+            },
+        )
 
 
 @app.get("/data/validate")
@@ -451,7 +1112,7 @@ def history_page(request: Request, db: Session = Depends(get_db)):
 
 
 
-# 3 Поиск и карточка школы
+# 3 РџРѕРёСЃРє Рё РєР°СЂС‚РѕС‡РєР° С€РєРѕР»С‹
 @app.get("/search")
 def search_page(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
@@ -495,7 +1156,7 @@ def school_card(request: Request, school_id: int, db: Session = Depends(get_db))
 
 
 
-# 4 Подбор и рейтинг
+# 4 РџРѕРґР±РѕСЂ Рё СЂРµР№С‚РёРЅРі
 @app.get("/rating/profile")
 def rating_profile(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
@@ -537,7 +1198,7 @@ def rating_calc(
 
 
 
-# 5 Настройки анализа (заглушки)
+# 5 РќР°СЃС‚СЂРѕР№РєРё Р°РЅР°Р»РёР·Р° (Р·Р°РіР»СѓС€РєРё)
 @app.get("/settings")
 def settings_home(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
@@ -547,27 +1208,33 @@ def settings_home(request: Request, db: Session = Depends(get_db)):
 @app.get("/settings/filters")
 def settings_filters(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
-    return render("stub_page.html", {"request": request, "user": user, "title": "5.1 Конструктор фильтров", "back_url": "/settings"})
+    return render("stub_page.html", {"request": request, "user": user, "title": "РљРѕРЅСЃС‚СЂСѓРєС‚РѕСЂ С„РёР»СЊС‚СЂРѕРІ", "back_url": "/settings"})
 
 
 @app.get("/settings/weights")
 def settings_weights(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
-    return render("stub_page.html", {"request": request, "user": user, "title": "5.2 Метрики и веса", "back_url": "/settings"})
+    return render("stub_page.html", {"request": request, "user": user, "title": "РњРµС‚СЂРёРєРё Рё РІРµСЃР°", "back_url": "/settings"})
 
 
 @app.get("/settings/profiles")
 def settings_profiles(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
-    return render("stub_page.html", {"request": request, "user": user, "title": "5.3 Профили расчёта", "back_url": "/settings"})
+    return render("stub_page.html", {"request": request, "user": user, "title": "РџСЂРѕС„РёР»Рё СЂР°СЃС‡С‘С‚Р°", "back_url": "/settings"})
 
 
 
-# 6 Отчётность (частично)
+# 6 РћС‚С‡С‘С‚РЅРѕСЃС‚СЊ
+@app.get("/reports")
+def reports_home(request: Request, db: Session = Depends(get_db)):
+    user = require_user(request, db)
+    return render("reports_home.html", {"request": request, "user": user})
+
+
 @app.get("/reports/generate")
 def report_generate(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
-    return render("stub_page.html", {"request": request, "user": user, "title": "6. Выгрузка / отчёт", "back_url": "/"})
+    return render("report_generate.html", {"request": request, "user": user})
 
 
 @app.get("/reports/archive")
@@ -580,11 +1247,11 @@ def report_archive(request: Request, db: Session = Depends(get_db)):
 @app.get("/reports/calc-history")
 def calc_history(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
-    return render("stub_page.html", {"request": request, "user": user, "title": "6.2 История расчётов", "back_url": "/"})
+    return render("calc_history.html", {"request": request, "user": user})
 
 
 
-# 7 Администрирование (только admin)
+# 7 РђРґРјРёРЅРёСЃС‚СЂРёСЂРѕРІР°РЅРёРµ (С‚РѕР»СЊРєРѕ admin)
 @app.get("/admin")
 def admin_home(request: Request, db: Session = Depends(get_db)):
     user = require_admin(request, db)
@@ -594,16 +1261,16 @@ def admin_home(request: Request, db: Session = Depends(get_db)):
 @app.get("/admin/roles")
 def admin_roles(request: Request, db: Session = Depends(get_db)):
     user = require_admin(request, db)
-    return render("stub_page.html", {"request": request, "user": user, "title": "7.1 Роли и права", "back_url": "/admin"})
+    return render("stub_page.html", {"request": request, "user": user, "title": "Р РѕР»Рё Рё РїСЂР°РІР°", "back_url": "/admin"})
 
 
 @app.get("/admin/directories")
 def admin_directories(request: Request, db: Session = Depends(get_db)):
-    user = require_admin(request, db)
-    return render("stub_page.html", {"request": request, "user": user, "title": "7.2 Справочники", "back_url": "/admin"})
+    require_admin(request, db)
+    return RedirectResponse("/data/directories", status_code=303)
 
 
 @app.get("/admin/methodologies")
 def admin_methodologies(request: Request, db: Session = Depends(get_db)):
     user = require_admin(request, db)
-    return render("stub_page.html", {"request": request, "user": user, "title": "7.3 Методики", "back_url": "/admin"})
+    return render("stub_page.html", {"request": request, "user": user, "title": "РњРµС‚РѕРґРёРєРё", "back_url": "/admin"})

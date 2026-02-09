@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>3.2 Карточка школы</h1>
+<h1>Карточка школы</h1>
 
 {% if school %}
   <div class="card">
@@ -9,7 +9,7 @@
     <p><b>Школа:</b> {{ school.name }}</p>
 
     <div class="row">
-      <a class="btn" href="/reports/generate">Выгрузка</a>
+      <a class="btn" href="/reports/generate">Выгрузка и отчёт</a>
       <a class="btn btn-ghost" href="/search">Назад</a>
     </div>
   </div>

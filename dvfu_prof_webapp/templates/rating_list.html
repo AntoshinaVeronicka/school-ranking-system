@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>4.3 Рейтинг школ</h1>
+<h1>Рейтинг школ</h1>
 
 <div class="card">
   <p><b>Профиль:</b> {{ program.institute }} – {{ program.name }}. <b>Год:</b> {{ year }}.</p>
@@ -37,7 +37,7 @@
   {% endif %}
 
   <div class="row">
-    <a class="btn" href="/reports/generate">Выгрузка</a>
+    <a class="btn" href="/reports/generate">Выгрузка и отчёт</a>
     <a class="btn btn-ghost" href="/rating/profile">Изменить фильтры</a>
   </div>
 </div>

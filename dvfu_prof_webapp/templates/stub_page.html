@@ -5,6 +5,9 @@
 <div class="card">
   <p class="muted">Экран-плейсхолдер для демонстрации дерева диалога. Реализацию бизнес-логики можно добавлять по мере готовности БД и требований.</p>
   <div class="row">
+    {% if validate_url %}
+      <a class="btn" href="{{ validate_url }}">Проверить</a>
+    {% endif %}
     <a class="btn btn-ghost" href="{{ back_url }}">Назад</a>
   </div>
 </div>

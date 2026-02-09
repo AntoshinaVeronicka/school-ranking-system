@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Выгрузка и отчёт</h1>
+
+<div class="card">
+  <p class="muted">
+    Экран выгрузки и отчётности. В учебном прототипе здесь показан каркас раздела: можно перейти в архив
+    выгрузок или к истории расчётов.
+  </p>
+
+  <div class="row">
+    <a class="btn" href="/reports/archive">В архив</a>
+    <a class="btn btn-ghost" href="/reports/calc-history">История расчётов</a>
+    <a class="btn btn-ghost" href="/reports">Назад</a>
+  </div>
+</div>
+{% endblock %}

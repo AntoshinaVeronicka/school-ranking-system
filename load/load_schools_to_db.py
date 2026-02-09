@@ -167,6 +167,30 @@ def pick_sheet_console(sheet_names: List[str], default: Optional[str] = None) ->
     return prompt_default
 
 
+def resolve_sheet_argument(sheet_arg: str, sheet_names: List[str]) -> object:
+    value = sheet_arg.strip()
+    if not value:
+        raise ValueError("Параметр --sheet не должен быть пустым.")
+
+    # Сначала пытаемся сопоставить по имени листа (включая числовые имена: "2024").
+    for sheet_name in sheet_names:
+        if sheet_name.casefold() == value.casefold():
+            return sheet_name
+
+    if value.isdigit():
+        idx = int(value)
+        # Поддержка ввода индекса листа в человеко-ориентированном формате (1..N).
+        if 1 <= idx <= len(sheet_names):
+            return sheet_names[idx - 1]
+        if idx == 0 and sheet_names:
+            return sheet_names[0]
+        # Обратная совместимость со старым 0-based поведением.
+        if 0 <= idx < len(sheet_names):
+            return sheet_names[idx]
+
+    raise ValueError(f"Лист '{value}' не найден. Доступные листы: {', '.join(sheet_names)}")
+
+
 def find_header_row(path: Path, sheet: object, max_scan: int = 50) -> int:
     raw = pd.read_excel(path, sheet_name=sheet, header=None, engine="openpyxl", dtype=str, nrows=max_scan)
     for i in range(min(max_scan, len(raw))):
@@ -177,7 +201,18 @@ def find_header_row(path: Path, sheet: object, max_scan: int = 50) -> int:
 
 
 def infer_region_from_filename(path: Path) -> str:
-    return norm_spaces(path.stem.replace("_", " "))
+    region = norm_spaces(path.stem.replace("_", " "))
+    cleaned = re.sub(r"^\s*directories(?:\s+|[-_]+)", "", region, flags=re.IGNORECASE)
+    cleaned = norm_spaces(cleaned)
+    return cleaned or region
+
+
+def normalize_municipality_name(value: str) -> str:
+    text = norm_spaces(value)
+    if not text:
+        return ""
+    # Избегаем дублей вида "Город X" и "город X".
+    return text[0].upper() + text[1:] if text else text
 
 
 def _norm_col_name(x: object) -> str:
@@ -241,6 +276,7 @@ def read_excel_fixed(path: Path, sheet: object) -> pd.DataFrame:
         out[c] = out[c].map(lambda x: "" if str(x).strip().lower() == "nan" else str(x))
         out[c] = out[c].map(norm_spaces)
 
+    out["municipality"] = out["municipality"].map(normalize_municipality_name)
     out = out[(out["municipality"] != "") & (out["school"] != "")]
     out["school"] = out["school"].map(standardize_school_name)
 
@@ -433,7 +469,11 @@ def load_to_db(df: pd.DataFrame, db_cfg: Dict[str, object], dry_run: bool = Fals
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Загрузка школ и профилей из Excel в PostgreSQL")
     p.add_argument("file", nargs="?", help="Путь к Excel или имя файла в текущей папке или на рабочем столе")
-    p.add_argument("--sheet", default="", help="Имя листа или индекс. Если не задано – предложит выбрать")
+    p.add_argument(
+        "--sheet",
+        default="",
+        help="Имя листа или индекс (1..N/0). Если число совпадает с именем листа, оно трактуется как имя.",
+    )
     p.add_argument("--dry-run", action="store_true", help="Только чтение и обработка, без записи в базу")
     p.add_argument("--pick", action="store_true", help="Открыть окно выбора файла")
     return p.parse_args(argv)
@@ -457,8 +497,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     sheet_names = get_sheet_names(path)
 
     if args.sheet.strip():
-        s = args.sheet.strip()
-        sheet: object = int(s) if s.isdigit() else s
+        sheet = resolve_sheet_argument(args.sheet, sheet_names)
     else:
         default = "2024" if "2024" in sheet_names else (sheet_names[0] if sheet_names else "0")
         sheet = pick_sheet_console(sheet_names, default=default)
