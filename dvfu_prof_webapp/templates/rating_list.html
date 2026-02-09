@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>4.3 Рейтинг школ</h1>
+
+<div class="card">
+  <p><b>Профиль:</b> {{ program.institute }} – {{ program.name }}. <b>Год:</b> {{ year }}.</p>
+
+  {% if ranked %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Место</th>
+          <th>Школа</th>
+          <th>Выпускники</th>
+          <th>Средний балл</th>
+          <th>Соответствие</th>
+          <th>Итоговый балл</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in ranked %}
+        <tr>
+          <td>{{ loop.index }}</td>
+          <td>{{ r.region }} / {{ r.municipality }} / {{ r.name }}</td>
+          <td>{{ r.graduates }}</td>
+          <td>{{ "%.2f"|format(r.avg_score_all) if r.avg_score_all is not none else "–" }}</td>
+          <td>{{ "%.2f"|format(r.match_share) if r.match_share is not none else "–" }}</td>
+          <td>{{ "%.4f"|format(r.rating_score) }}</td>
+          <td><a class="btn btn-small" href="/search/school/{{ r.school_id }}">Карточка</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <div class="alert">Рейтинг не сформирован: недостаточно данных после фильтрации.</div>
+  {% endif %}
+
+  <div class="row">
+    <a class="btn" href="/reports/generate">Выгрузка</a>
+    <a class="btn btn-ghost" href="/rating/profile">Изменить фильтры</a>
+  </div>
+</div>
+{% endblock %}

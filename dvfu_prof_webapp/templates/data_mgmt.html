@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>1. Главное меню</h1>
+
+<div class="grid">
+  <a class="tile" href="/data">2. Данные и загрузки</a>
+  <a class="tile" href="/search">3. Поиск школ</a>
+  <a class="tile" href="/rating/profile">4. Подбор и рейтинг</a>
+  <a class="tile" href="/settings">5. Настройки анализа</a>
+  <a class="tile" href="/reports/generate">6. Выгрузка / отчёт</a>
+  <a class="tile" href="/reports/calc-history">6.2 История расчётов</a>
+  {% if user.is_admin %}
+    <a class="tile" href="/admin">7. Администрирование</a>
+  {% endif %}
+</div>
+{% endblock %}

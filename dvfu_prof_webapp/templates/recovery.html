@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>0.1 Восстановление</h1>
+<form method="post" action="/recovery" class="card">
+  <label>Логин
+    <input name="login" required>
+  </label>
+
+  {% if info %}
+    <div class="ok">{{ info }}</div>
+  {% endif %}
+
+  <div class="row">
+    <button class="btn" type="submit">Отправить</button>
+    <a class="btn btn-ghost" href="/login">Назад</a>
+  </div>
+</form>
+{% endblock %}

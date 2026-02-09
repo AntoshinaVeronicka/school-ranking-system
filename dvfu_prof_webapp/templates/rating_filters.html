@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>4.1 Фильтры и пороги</h1>
+
+<div class="card">
+  <p><b>Профиль:</b> {{ program.institute }} – {{ program.name }}</p>
+
+  <form method="post" action="/rating/calc">
+    <input type="hidden" name="program_id" value="{{ program.id }}">
+
+    <div class="row">
+      <label>Год
+        <input name="year" type="number" value="{{ year }}" min="2000" max="2100">
+      </label>
+      <label>Минимум выпускников
+        <input name="min_graduates" type="number" value="{{ min_graduates }}" min="0">
+      </label>
+    </div>
+
+    <h2>Весовые коэффициенты</h2>
+    <div class="row">
+      <label>Выпускники
+        <input name="w_graduates" type="number" step="0.05" value="{{ w_graduates }}">
+      </label>
+      <label>Средний балл
+        <input name="w_avg_score" type="number" step="0.05" value="{{ w_avg_score }}">
+      </label>
+      <label>Соответствие профилю
+        <input name="w_match_share" type="number" step="0.05" value="{{ w_match_share }}">
+      </label>
+    </div>
+
+    <div class="row">
+      <button class="btn" type="submit">Рассчитать</button>
+      <a class="btn btn-ghost" href="/rating/profile">Назад</a>
+    </div>
+
+    <p class="muted">Оценка рейтинга – демонстрационная: нормализация показателей и взвешенная сумма.</p>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>0. Вход</h1>
+<form method="post" action="/login" class="card">
+  <label>Логин
+    <input name="login" required>
+  </label>
+  <label>Пароль
+    <input name="password" type="password" required>
+  </label>
+
+  {% if error %}
+    <div class="alert">{{ error }}</div>
+  {% endif %}
+
+  <div class="row">
+    <button class="btn" type="submit">Войти</button>
+    <a class="btn btn-ghost" href="/recovery">Восстановление</a>
+  </div>
+
+  <p class="muted">Демо-доступ: admin / admin.</p>
+</form>
+{% endblock %}

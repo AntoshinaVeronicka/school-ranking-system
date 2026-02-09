@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>3. Поиск школ</h1>
+
+<form method="post" action="/search" class="card">
+  <div class="row">
+    <label class="grow">Поиск (по названию)
+      <input name="q" value="{{ q }}">
+    </label>
+    <label>Год
+      <input name="year" type="number" value="{{ year }}" min="2000" max="2100">
+    </label>
+    <label>Направление
+      <select name="program_id">
+        <option value="">–</option>
+        {% for p in programs %}
+          <option value="{{ p.id }}" {% if program_id==p.id %}selected{% endif %}>{{ p.institute }} – {{ p.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+
+  <div class="row">
+    <button class="btn" type="submit">Запрос</button>
+    <a class="btn btn-ghost" href="/">В меню</a>
+  </div>
+</form>
+
+{% if results %}
+  <div class="card">
+    <h2>3.1 Расчёт показателей</h2>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Школа</th>
+          <th>Выпускники</th>
+          <th>Средний балл (среднее по предметам)</th>
+          <th>Доля соответствия</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in results %}
+        <tr>
+          <td>{{ r.region }} / {{ r.municipality }} / {{ r.name }}</td>
+          <td>{{ r.graduates }}</td>
+          <td>{{ "%.2f"|format(r.avg_score_all) if r.avg_score_all is not none else "–" }}</td>
+          <td>{{ "%.2f"|format(r.match_share) if r.match_share is not none else "–" }}</td>
+          <td><a class="btn btn-small" href="/search/calc/{{ r.school_id }}?year={{ year }}{% if program_id %}&program_id={{ program_id }}{% endif %}">Карточка</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="muted">Доля соответствия – демонстрационная оценка на основе наличия статистики по предметам профиля.</p>
+  </div>
+{% endif %}
+{% endblock %}

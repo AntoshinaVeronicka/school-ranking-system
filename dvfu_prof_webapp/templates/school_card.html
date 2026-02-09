@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>3.2 Карточка школы</h1>
+
+{% if school %}
+  <div class="card">
+    <p><b>Регион:</b> {{ school.region }}</p>
+    <p><b>Муниципалитет:</b> {{ school.municipality }}</p>
+    <p><b>Школа:</b> {{ school.name }}</p>
+
+    <div class="row">
+      <a class="btn" href="/reports/generate">Выгрузка</a>
+      <a class="btn btn-ghost" href="/search">Назад</a>
+    </div>
+  </div>
+{% else %}
+  <div class="alert">Школа не найдена.</div>
+  <div class="row">
+    <a class="btn btn-ghost" href="/search">Назад</a>
+  </div>
+{% endif %}
+{% endblock %}

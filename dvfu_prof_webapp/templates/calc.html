@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>3.1 Расчёт показателей</h1>
+
+{% if item %}
+  <div class="card">
+    <p><b>Школа:</b> {{ item.region }} / {{ item.municipality }} / {{ item.name }}</p>
+    <p><b>Выпускники:</b> {{ item.graduates }}</p>
+    <p><b>Средний балл (среднее по предметам):</b> {{ "%.2f"|format(item.avg_score_all) if item.avg_score_all is not none else "–" }}</p>
+    <p><b>Доля соответствия профилю:</b> {{ "%.2f"|format(item.match_share) if item.match_share is not none else "–" }}</p>
+
+    <div class="row">
+      <a class="btn" href="/search/school/{{ item.school_id }}">Карточка школы</a>
+      <a class="btn btn-ghost" href="/search">Назад</a>
+    </div>
+  </div>
+{% else %}
+  <div class="alert">Нет данных для расчёта. Убедитесь, что ЕГЭ загружены и выбраны параметры.</div>
+  <div class="row">
+    <a class="btn btn-ghost" href="/search">Назад</a>
+  </div>
+{% endif %}
+{% endblock %}

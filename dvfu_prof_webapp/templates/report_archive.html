@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>6.1 Архив выгрузок</h1>
+
+<div class="card">
+  <p class="muted">Демо-архив: список последних операций импорта (пример журнала артефактов).</p>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Дата</th>
+        <th>Тип</th>
+        <th>Файл</th>
+        <th>Статус</th>
+        <th>Детали</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for j in jobs %}
+      <tr>
+        <td>{{ j.created_at }}</td>
+        <td>{{ j.job_type }}</td>
+        <td>{{ j.filename }}</td>
+        <td>{{ j.status }}</td>
+        <td class="muted">{{ j.details }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="row">
+  <a class="btn btn-ghost" href="/">В меню</a>
+</div>
+{% endblock %}

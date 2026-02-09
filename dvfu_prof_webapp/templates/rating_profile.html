@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>4. Подбор по профилю</h1>
+
+<form method="post" action="/rating/filters" class="card">
+  <label>Направление подготовки
+    <select name="program_id" required>
+      {% for p in programs %}
+        <option value="{{ p.id }}">{{ p.institute }} – {{ p.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <div class="row">
+    <button class="btn" type="submit">Выбрать</button>
+    <a class="btn btn-ghost" href="/">В меню</a>
+  </div>
+</form>
+{% endblock %}
