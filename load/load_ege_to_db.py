@@ -36,6 +36,7 @@ from load_common import (
     load_env_file,
     make_muni_key,
     make_school_key,
+    normalize_municipality_name,
     norm_spaces,
     pick_file_dialog_desktop,
     resolve_user_path,
@@ -219,13 +220,10 @@ def resolve_fixed_cols_flat(df: pd.DataFrame) -> Tuple[str, str, Optional[str], 
 
 def clean_common_rows(out: pd.DataFrame) -> pd.DataFrame:
     # Приводим NaN/None к пустому значению до текстовой нормализации.
-    out["municipality"] = out["municipality"].map(
-        lambda v: "" if v is None or (isinstance(v, float) and pd.isna(v)) else norm_spaces(v)
-    )
+    out["municipality"] = out["municipality"].map(normalize_municipality_name)
     out["school"] = out["school"].map(
         lambda v: "" if v is None or (isinstance(v, float) and pd.isna(v)) else norm_spaces(v)
     )
-    out["municipality"] = out["municipality"].replace({"nan": "", "none": "", "nat": ""})
     out["school"] = out["school"].replace({"nan": "", "none": "", "nat": ""})
     out["school"] = out["school"].map(standardize_school_name)
 
@@ -284,8 +282,6 @@ def read_actual_excel(path: Path, sheet: str) -> pd.DataFrame:
 
     mun_t = pick_fixed("муницип")
     school_t = pick_fixed("образоват")
-    prof_t = pick_fixed("профил")  # not used, but may exist
-
     grads_t = None
     for c in df.columns:
         c0 = str(c[0]).casefold()
@@ -436,7 +432,7 @@ def build_school_index(
 
     for s in schools:
         sk = make_school_key(s.full_name)
-        mk_exact = norm_spaces(s.municipality_name or "")
+        mk_exact = normalize_municipality_name(s.municipality_name or "")
         mk = make_muni_key(s.municipality_name or "")
         pair_exact_ids.setdefault((mk_exact, sk), []).append(s.school_id)
         pair_ids.setdefault((mk, sk), []).append(s.school_id)
@@ -446,9 +442,10 @@ def build_school_index(
     pair_exact_amb: set[Tuple[str, str]] = set()
     for k, ids in pair_exact_ids.items():
         uniq = sorted(set(ids))
-        if len(uniq) == 1:
-            pair_exact_unique[k] = uniq[0]
-        else:
+        # Если дубли возникли только из-за разного регистра муниципалитета в справочнике,
+        # выбираем детерминированно минимальный school_id.
+        pair_exact_unique[k] = uniq[0]
+        if len(uniq) > 1:
             pair_exact_amb.add(k)
 
     pair_unique: Dict[Tuple[str, str], int] = {}
@@ -600,7 +597,7 @@ def load_ege_to_db(
             matched = 0
 
             for _, r in df.iterrows():
-                mun = norm_spaces(r.get("municipality"))
+                mun = normalize_municipality_name(r.get("municipality"))
                 sch = standardize_school_name(r.get("school"))
                 if not mun or not sch:
                     continue

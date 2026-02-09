@@ -1,1 +1,6 @@
 .env
+.venv/
+**/__pycache__/
+*.py[cod]
+dvfu_prof_webapp/app.db
+dvfu_prof_webapp/uploads/

@@ -26,6 +26,22 @@ def norm_spaces(s: Any) -> str:
     return re.sub(r"\s+", " ", s.strip())
 
 
+def normalize_municipality_name(s: Any) -> str:
+    """
+    Каноническая форма муниципалитета:
+    - схлопываем пробелы;
+    - убираем пустые/nan-like значения;
+    - нормализуем префикс "город " к нижнему регистру.
+    """
+    text = norm_spaces(s)
+    if not text:
+        return ""
+    if text.casefold() in {"nan", "none", "nat"}:
+        return ""
+    text = re.sub(r"^\s*город\s+", "город ", text, flags=re.IGNORECASE)
+    return text
+
+
 def normalize_text(s: Any) -> str:
     return re.sub(r"\s+", " ", ("" if s is None else str(s)).strip())
 

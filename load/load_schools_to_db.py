@@ -28,6 +28,7 @@ from psycopg2.extras import execute_values
 from load_common import (
     clean_inner_quotes,
     get_db_config,
+    normalize_municipality_name,
     norm_spaces,
     pick_file_dialog_desktop,
     resolve_user_path,
@@ -207,14 +208,6 @@ def infer_region_from_filename(path: Path) -> str:
     return cleaned or region
 
 
-def normalize_municipality_name(value: str) -> str:
-    text = norm_spaces(value)
-    if not text:
-        return ""
-    # Избегаем дублей вида "Город X" и "город X".
-    return text[0].upper() + text[1:] if text else text
-
-
 def _norm_col_name(x: object) -> str:
     s = str(x).replace("\n", " ")
     s = clean_inner_quotes(s)
@@ -303,10 +296,23 @@ def fetch_region_ids(cur, regions: Sequence[str]) -> Dict[str, int]:
 
 
 def insert_municipalities(cur, rows: Sequence[Tuple[int, str]]) -> None:
+    if not rows:
+        return
     q = """
+        WITH v(region_id, name) AS (VALUES %s),
+        dedup AS (
+            SELECT DISTINCT region_id, name
+            FROM v
+        )
         INSERT INTO edu.municipality (region_id, name)
-        VALUES %s
-        ON CONFLICT (region_id, name) DO NOTHING
+        SELECT d.region_id, d.name
+        FROM dedup d
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM edu.municipality m
+            WHERE m.region_id = d.region_id
+              AND lower(m.name) = lower(d.name)
+        )
     """
     execute_values(cur, q, list(rows), page_size=1000)
 
@@ -317,9 +323,12 @@ def fetch_municipality_ids(cur, rows: Sequence[Tuple[int, str]]) -> Dict[Tuple[i
 
     query = """
         WITH v(region_id, name) AS (VALUES %s)
-        SELECT m.municipality_id, m.region_id, m.name
-        FROM edu.municipality m
-        JOIN v ON v.region_id = m.region_id AND v.name = m.name
+        SELECT MIN(m.municipality_id) AS municipality_id, v.region_id, v.name
+        FROM v
+        JOIN edu.municipality m
+          ON m.region_id = v.region_id
+         AND lower(m.name) = lower(v.name)
+        GROUP BY v.region_id, v.name
     """
     fetched = execute_values(cur, query, list(rows), fetch=True)
     return {(rid, name): mid for (mid, rid, name) in fetched}

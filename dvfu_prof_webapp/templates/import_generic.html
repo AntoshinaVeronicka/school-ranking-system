@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ title }}</h1>
+
+<form method="post" action="{{ submit_url }}" enctype="multipart/form-data" class="card">
+  <div class="row">
+    <label class="grow">Регион (опционально)
+      <input name="region" placeholder="Например: Приморский край" value="{{ form.region }}">
+    </label>
+    <label>Год
+      <input name="year" type="number" min="2000" max="2100" value="{{ form.year }}" placeholder="Авто из листа">
+    </label>
+  </div>
+
+  <div class="row">
+    <label class="grow">Лист (имя или номер, опционально)
+      <input name="sheet" value="{{ form.sheet }}" placeholder="Если пусто — будет выбран первый лист">
+    </label>
+    <label class="grow">Файл Excel (.xlsx/.xls)
+      <input name="file" type="file" accept=".xlsx,.xls" required>
+    </label>
+  </div>
+
+  <label class="checkbox-row">
+    <input name="dry_run" type="checkbox" {% if form.dry_run %}checked{% endif %}>
+    <span>Dry-run (без записи в БД)</span>
+  </label>
+
+  {% if error %}
+    <div class="alert">{{ error }}</div>
+  {% endif %}
+  {% if ok %}
+    <div class="ok">{{ ok }}</div>
+  {% endif %}
+
+  <div class="row">
+    <button class="btn" type="submit">Запустить импорт</button>
+    <a class="btn btn-ghost" href="/data/validate">Проверить</a>
+    <a class="btn btn-ghost" href="/data">Назад</a>
+  </div>
+
+  <p class="muted">{{ hint }}</p>
+</form>
+
+{% if dialog_output %}
+  <div class="card">
+    <h2>Диалог выполнения</h2>
+    <pre class="log-block">{{ dialog_output }}</pre>
+  </div>
+{% endif %}
+{% endblock %}
