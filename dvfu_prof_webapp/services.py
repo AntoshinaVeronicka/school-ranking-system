@@ -12,7 +12,6 @@ from fastapi import Request, UploadFile
 from fastapi.responses import HTMLResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from passlib.context import CryptContext
-from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 try:
@@ -23,7 +22,7 @@ try:
         TEMPLATES_DIR,
         UPLOAD_DIR,
     )
-    from .db import EgeStat, ImportJob, ProgramRequirement, School, User
+    from .db import ImportJob, User
 except ImportError:
     from config import (
         DEFAULT_EGE_SUBJECT_SCORES,
@@ -32,7 +31,7 @@ except ImportError:
         TEMPLATES_DIR,
         UPLOAD_DIR,
     )
-    from db import EgeStat, ImportJob, ProgramRequirement, School, User
+    from db import ImportJob, User
 
 
 # Security / sessions
@@ -66,79 +65,6 @@ def require_admin(request: Request, db: Session) -> User:
     if not user.is_admin:
         raise PermissionError("admin required")
     return user
-
-
-# Calculations (demo)
-def subjects_for_program(db: Session, program_id: int) -> list[str]:
-    rows = db.execute(select(ProgramRequirement.subject).where(ProgramRequirement.program_id == program_id)).all()
-    return [r[0] for r in rows]
-
-
-def calculate_school_metrics(db: Session, school_ids: list[int], year: int, program_id: int | None) -> list[dict[str, Any]]:
-    if not school_ids:
-        return []
-
-    # In real model graduates may be stored separately; here we use max(graduates) per subject as heuristic.
-    subq = (
-        select(
-            EgeStat.school_id.label("school_id"),
-            func.max(EgeStat.graduates).label("graduates"),
-            func.avg(EgeStat.avg_score).label("avg_score_all"),
-        )
-        .where(EgeStat.school_id.in_(school_ids), EgeStat.year == year)
-        .group_by(EgeStat.school_id)
-        .subquery()
-    )
-
-    rows = db.execute(
-        select(School, subq.c.graduates, subq.c.avg_score_all).join(subq, School.id == subq.c.school_id)
-    ).all()
-
-    req_subjects = subjects_for_program(db, program_id) if program_id else []
-
-    result: list[dict[str, Any]] = []
-    for school, grads, avg_score_all in rows:
-        match_share = None
-        if req_subjects:
-            have = db.execute(
-                select(func.count(func.distinct(EgeStat.subject)))
-                .where(EgeStat.school_id == school.id, EgeStat.year == year, EgeStat.subject.in_(req_subjects))
-            ).scalar_one()
-            match_share = float(have) / float(len(req_subjects)) if req_subjects else None
-
-        result.append(
-            {
-                "school_id": school.id,
-                "region": school.region,
-                "municipality": school.municipality,
-                "name": school.name,
-                "graduates": int(grads or 0),
-                "avg_score_all": float(avg_score_all) if avg_score_all is not None else None,
-                "match_share": match_share,
-            }
-        )
-
-    return result
-
-
-def rank_schools(metrics: list[dict[str, Any]], w_graduates: float, w_avg_score: float, w_match_share: float) -> list[dict[str, Any]]:
-    if not metrics:
-        return []
-
-    max_grads = max(m["graduates"] for m in metrics) or 1
-    max_score = max((m["avg_score_all"] or 0.0) for m in metrics) or 1.0
-
-    ranked = []
-    for m in metrics:
-        score = (
-            w_graduates * (m["graduates"] / max_grads)
-            + w_avg_score * ((m["avg_score_all"] or 0.0) / max_score)
-            + w_match_share * (m["match_share"] or 0.0)
-        )
-        ranked.append({**m, "rating_score": float(score)})
-
-    ranked.sort(key=lambda x: x["rating_score"], reverse=True)
-    return ranked
 
 
 # Forms/helpers

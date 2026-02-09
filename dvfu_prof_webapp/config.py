@@ -1,13 +1,26 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 APP_NAME = "DVFU - Профориентация и анализ школ"
-SECRET_KEY = "CHANGE_ME"
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
 
+load_dotenv(PROJECT_ROOT / ".env")
+
+
+def _require_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise RuntimeError(f"Environment variable '{name}' is required. Set it in .env")
+    return value
+
+
+SECRET_KEY = _require_env("SECRET_KEY")
 DATABASE_URL = f"sqlite:///{(BASE_DIR / 'app.db').as_posix()}"
 UPLOAD_DIR = BASE_DIR / "uploads"
 STATIC_DIR = BASE_DIR / "static"
@@ -31,5 +44,5 @@ DEFAULT_EGE_SUBJECT_SCORES = [
     {"subject_id": 11, "name": "Химия", "min_passing_score": 40},
 ]
 
-DEFAULT_ADMIN_LOGIN = "admin"
-DEFAULT_ADMIN_PASSWORD = "admin"
+DEFAULT_ADMIN_LOGIN = os.getenv("DEFAULT_ADMIN_LOGIN", "admin")
+DEFAULT_ADMIN_PASSWORD = _require_env("DEFAULT_ADMIN_PASSWORD")

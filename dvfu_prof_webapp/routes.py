@@ -116,7 +116,7 @@ except ImportError:
 
 router = APIRouter()
 
-# 0 Р’С…РѕРґ / 0.1 Р’РѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРёРµ / 1 РњРµРЅСЋ / 1.1 Р’С‹С…РѕРґ
+# 0 Вход / 0.1 Восстановление / 1 Меню / 1.1 Выход
 @router.get("/")
 def main_menu(request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
@@ -139,7 +139,7 @@ def login_action(
 ):
     user = db.query(User).filter(User.login == login).one_or_none()
     if user is None or not verify_password(password, user.password_hash):
-        return render("login.html", {"request": request, "user": None, "error": "РќРµРІРµСЂРЅС‹Р№ Р»РѕРіРёРЅ РёР»Рё РїР°СЂРѕР»СЊ."})
+        return render("login.html", {"request": request, "user": None, "error": "Неверный логин или пароль."})
 
     request.session["user_id"] = user.id
     return RedirectResponse("/", status_code=303)
@@ -152,7 +152,7 @@ def recovery_page(request: Request):
 
 @router.post("/recovery")
 def recovery_action(request: Request, login: str = Form(...)):
-    info = f"Р—Р°РїСЂРѕСЃ РЅР° РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРёРµ РґР»СЏ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ В«{login}В» Р·Р°СЂРµРіРёСЃС‚СЂРёСЂРѕРІР°РЅ (РґРµРјРѕ-СЂРµР¶РёРј)."
+    info = f"Запрос на восстановление для пользователя «{login}» зарегистрирован (демо-режим)."
     return render("recovery.html", {"request": request, "user": None, "info": info})
 
 
@@ -162,7 +162,7 @@ def logout(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 
-# 2 Р”Р°РЅРЅС‹Рµ Рё Р·Р°РіСЂСѓР·РєРё
+# 2 Данные и загрузки
 @router.get("/data")
 def data_mgmt(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
@@ -214,7 +214,7 @@ def import_ege_action(
             {
                 "request": request,
                 "user": user,
-                "error": "РўРёРї РґР°РЅРЅС‹С… РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ 'plan' РёР»Рё 'actual'.",
+                "error": "Тип данных должен быть 'plan' или 'actual'.",
                 "ok": None,
                 "dialog_output": None,
                 "form": form_state,
@@ -239,22 +239,22 @@ def import_ege_action(
         if year_value is None:
             year_value = infer_year_from_sheet_name(sheet_name)
         if year_value is None:
-            raise ValueError("РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ РіРѕРґ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё. РЈРєР°Р¶РёС‚Рµ РїРѕР»Рµ 'Р“РѕРґ' РІСЂСѓС‡РЅСѓСЋ.")
+            raise ValueError("Не удалось определить год автоматически. Укажите поле 'Год' вручную.")
 
         region_value = region.strip() or filepath.stem.replace("_", " ").strip()
         is_dry_run = dry_run is not None
 
         dialog_header = [
-            "РџР°СЂР°РјРµС‚СЂС‹ Р·Р°РїСѓСЃРєР°:",
-            f"- Р¤Р°Р№Р»: {safe_name}",
-            f"- Р”РѕСЃС‚СѓРїРЅС‹Рµ Р»РёСЃС‚С‹: {', '.join(available_sheets)}",
-            f"- Р›РёСЃС‚: {sheet_name}",
-            f"- РўРёРї РґР°РЅРЅС‹С…: {kind_value}",
-            f"- Р“РѕРґ: {year_value}",
-            f"- Р РµРіРёРѕРЅ: {region_value}",
-            f"- Р РµР¶РёРј: {'dry-run' if is_dry_run else 'Р·Р°РїРёСЃСЊ РІ Р‘Р”'}",
+            "Параметры запуска:",
+            f"- Файл: {safe_name}",
+            f"- Доступные листы: {', '.join(available_sheets)}",
+            f"- Лист: {sheet_name}",
+            f"- Тип данных: {kind_value}",
+            f"- Год: {year_value}",
+            f"- Регион: {region_value}",
+            f"- Режим: {'dry-run' if is_dry_run else 'запись в БД'}",
             "",
-            "Р’С‹РІРѕРґ СЃРєСЂРёРїС‚Р°:",
+            "Вывод скрипта:",
         ]
 
         success, script_output = run_ege_loader_script(
@@ -289,8 +289,8 @@ def import_ege_action(
             {
                 "request": request,
                 "user": user,
-                "error": None if success else "EGE import finished with errors. See log below.",
-                "ok": "EGE import completed successfully." if success else None,
+                "error": None if success else "Загрузка ЕГЭ завершилась с ошибкой. Смотрите лог ниже.",
+                "ok": "Загрузка ЕГЭ выполнена успешно." if success else None,
                 "dialog_output": dialog_output,
                 "form": form_state,
             },
@@ -319,9 +319,9 @@ def import_admissions_page(request: Request, db: Session = Depends(get_db)):
     return render_generic_import_page(
         request=request,
         user=user,
-        title="РРјРїРѕСЂС‚ РїСЂРёС‘РјР°",
+        title="Импорт приёма",
         submit_url="/data/admissions",
-        hint="Р§РµСЂРЅРѕРІР°СЏ С„РѕСЂРјР° Р·Р°РіСЂСѓР·РєРё С„Р°Р№Р»Р° РїРѕ СЂР°Р·РґРµР»Сѓ РїСЂРёС‘РјР°. РџРѕРґРєР»СЋС‡РµРЅРёРµ Р±РёР·РЅРµСЃ-Р»РѕРіРёРєРё РјРѕР¶РЅРѕ РґРѕР±Р°РІРёС‚СЊ РЅР° СЃР»РµРґСѓСЋС‰РµРј С€Р°РіРµ.",
+        hint="Черновая форма загрузки файла по разделу приёма. Подключение бизнес-логики можно добавить на следующем шаге.",
         form=default_upload_form(),
         error=None,
         ok=None,
@@ -344,9 +344,9 @@ def import_admissions_action(
         request=request,
         user=user,
         db=db,
-        title="РРјРїРѕСЂС‚ РїСЂРёС‘РјР°",
+        title="Импорт приёма",
         submit_url="/data/admissions",
-        hint="Р§РµСЂРЅРѕРІР°СЏ С„РѕСЂРјР° Р·Р°РіСЂСѓР·РєРё С„Р°Р№Р»Р° РїРѕ СЂР°Р·РґРµР»Сѓ РїСЂРёС‘РјР°. РџРѕРґРєР»СЋС‡РµРЅРёРµ Р±РёР·РЅРµСЃ-Р»РѕРіРёРєРё РјРѕР¶РЅРѕ РґРѕР±Р°РІРёС‚СЊ РЅР° СЃР»РµРґСѓСЋС‰РµРј С€Р°РіРµ.",
+        hint="Черновая форма загрузки файла по разделу приёма. Подключение бизнес-логики можно добавить на следующем шаге.",
         job_type="admissions",
         upload_subdir="admissions",
         region=region,
@@ -363,9 +363,9 @@ def import_events_page(request: Request, db: Session = Depends(get_db)):
     return render_generic_import_page(
         request=request,
         user=user,
-        title="РРјРїРѕСЂС‚ РїСЂРѕС„РѕСЂРёРµРЅС‚Р°С†РёРё",
+        title="Импорт профориентации",
         submit_url="/data/events",
-        hint="Р§РµСЂРЅРѕРІР°СЏ С„РѕСЂРјР° Р·Р°РіСЂСѓР·РєРё С„Р°Р№Р»Р° РїРѕ СЂР°Р·РґРµР»Сѓ РїСЂРѕС„РѕСЂРёРµРЅС‚Р°С†РёРё. РџРѕРґРєР»СЋС‡РµРЅРёРµ Р±РёР·РЅРµСЃ-Р»РѕРіРёРєРё РјРѕР¶РЅРѕ РґРѕР±Р°РІРёС‚СЊ РЅР° СЃР»РµРґСѓСЋС‰РµРј С€Р°РіРµ.",
+        hint="Черновая форма загрузки файла по разделу профориентации. Подключение бизнес-логики можно добавить на следующем шаге.",
         form=default_upload_form(),
         error=None,
         ok=None,
@@ -388,9 +388,9 @@ def import_events_action(
         request=request,
         user=user,
         db=db,
-        title="РРјРїРѕСЂС‚ РїСЂРѕС„РѕСЂРёРµРЅС‚Р°С†РёРё",
+        title="Импорт профориентации",
         submit_url="/data/events",
-        hint="Р§РµСЂРЅРѕРІР°СЏ С„РѕСЂРјР° Р·Р°РіСЂСѓР·РєРё С„Р°Р№Р»Р° РїРѕ СЂР°Р·РґРµР»Сѓ РїСЂРѕС„РѕСЂРёРµРЅС‚Р°С†РёРё. РџРѕРґРєР»СЋС‡РµРЅРёРµ Р±РёР·РЅРµСЃ-Р»РѕРіРёРєРё РјРѕР¶РЅРѕ РґРѕР±Р°РІРёС‚СЊ РЅР° СЃР»РµРґСѓСЋС‰РµРј С€Р°РіРµ.",
+        hint="Черновая форма загрузки файла по разделу профориентации. Подключение бизнес-логики можно добавить на следующем шаге.",
         job_type="events",
         upload_subdir="events",
         region=region,
@@ -450,7 +450,7 @@ def directories_load_action(
                 "user": user,
                 "loader_form": form_state,
                 "subject_scores": get_subject_scores_from_db(),
-                "loader_error": "РќРµРёР·РІРµСЃС‚РЅС‹Р№ С‚РёРї Р·Р°РіСЂСѓР·С‡РёРєР°.",
+                "loader_error": "Неизвестный тип загрузчика.",
                 "loader_ok": None,
                 "loader_output": None,
                 "scores_error": None,
@@ -480,12 +480,12 @@ def directories_load_action(
 
         if loader_type == "schools":
             script_path = LOAD_SCHOOLS_SCRIPT
-            title = "Р—Р°РіСЂСѓР·РєР°: Р РµРіРёРѕРЅ / РњСѓРЅРёС†РёРїР°Р»РёС‚РµС‚ / РЁРєРѕР»Р° / РџСЂРѕС„РёР»СЊ"
+            title = "Загрузка: Регион / Муниципалитет / Школа / Профиль"
             if dry_run is not None:
                 args.append("--dry-run")
         else:
             script_path = LOAD_PROGRAMS_SCRIPT
-            title = "Р—Р°РіСЂСѓР·РєР°: РќР°РїСЂР°РІР»РµРЅРёСЏ Рё С‚СЂРµР±РѕРІР°РЅРёСЏ РїРѕ Р’Р"
+            title = "Загрузка: Направления и требования по ВИ"
             if dry_run is not None:
                 args.append("--dry-run")
             if create_missing_subjects is not None:
@@ -495,13 +495,13 @@ def directories_load_action(
         loader_output = "\n".join(
             [
                 f"{title}",
-                f"- Р¤Р°Р№Р»: {safe_name}",
-                f"- Р”РѕСЃС‚СѓРїРЅС‹Рµ Р»РёСЃС‚С‹: {', '.join(available_sheets)}",
-                f"- Р›РёСЃС‚: {sheet_name}",
-                f"- Dry-run: {'РґР°' if dry_run is not None else 'РЅРµС‚'}",
-                f"- create-missing-subjects: {'РґР°' if create_missing_subjects is not None else 'РЅРµС‚'}",
+                f"- Файл: {safe_name}",
+                f"- Доступные листы: {', '.join(available_sheets)}",
+                f"- Лист: {sheet_name}",
+                f"- Dry-run: {'да' if dry_run is not None else 'нет'}",
+                f"- create-missing-subjects: {'да' if create_missing_subjects is not None else 'нет'}",
                 "",
-                "Р’С‹РІРѕРґ СЃРєСЂРёРїС‚Р°:",
+                "Вывод скрипта:",
                 script_output,
             ]
         )
@@ -528,8 +528,8 @@ def directories_load_action(
                 "user": user,
                 "loader_form": form_state,
                 "subject_scores": get_subject_scores_from_db(),
-                "loader_error": None if success else "Р—Р°РіСЂСѓР·РєР° СЃРїСЂР°РІРѕС‡РЅРёРєРѕРІ Р·Р°РІРµСЂС€РёР»Р°СЃСЊ СЃ РѕС€РёР±РєРѕР№.",
-                "loader_ok": "Р—Р°РіСЂСѓР·РєР° СЃРїСЂР°РІРѕС‡РЅРёРєРѕРІ РІС‹РїРѕР»РЅРµРЅР° СѓСЃРїРµС€РЅРѕ." if success else None,
+                "loader_error": None if success else "Загрузка справочников завершилась с ошибкой.",
+                "loader_ok": "Загрузка справочников выполнена успешно." if success else None,
                 "loader_output": loader_output,
                 "scores_error": None,
                 "scores_ok": None,
@@ -573,15 +573,15 @@ async def directories_min_scores_action(request: Request, db: Session = Depends(
         name = str(row["name"])
         raw = str(row["min_passing_score"]).strip()
         if not raw:
-            errors.append(f"Р”Р»СЏ РїСЂРµРґРјРµС‚Р° '{name}' РЅРµ Р·Р°РїРѕР»РЅРµРЅ РјРёРЅРёРјР°Р»СЊРЅС‹Р№ Р±Р°Р»Р».")
+            errors.append(f"Для предмета '{name}' не заполнен минимальный балл.")
             continue
         try:
             score = int(raw)
         except ValueError:
-            errors.append(f"Р”Р»СЏ РїСЂРµРґРјРµС‚Р° '{name}' Р·РЅР°С‡РµРЅРёРµ '{raw}' РЅРµ СЏРІР»СЏРµС‚СЃСЏ С‡РёСЃР»РѕРј.")
+            errors.append(f"Для предмета '{name}' значение '{raw}' не является числом.")
             continue
         if score < 0 or score > 100:
-            errors.append(f"Р”Р»СЏ РїСЂРµРґРјРµС‚Р° '{name}' РјРёРЅРёРјР°Р»СЊРЅС‹Р№ Р±Р°Р»Р» РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ РІ РґРёР°РїР°Р·РѕРЅРµ 0..100.")
+            errors.append(f"Для предмета '{name}' минимальный балл должен быть в диапазоне 0..100.")
             continue
         updates.append((subject_id, name, score))
         row["min_passing_score"] = score
@@ -670,10 +670,10 @@ async def directories_min_scores_action(request: Request, db: Session = Depends(
 
         score_output = "\n".join(
             [
-                "РћР±РЅРѕРІР»РµРЅРёРµ РјРёРЅРёРјР°Р»СЊРЅС‹С… Р±Р°Р»Р»РѕРІ Р•Р“Р­:",
-                f"- РћР±РЅРѕРІР»РµРЅРѕ РїРѕ subject_id: {updated}",
-                f"- РћР±РЅРѕРІР»РµРЅРѕ РїРѕ name: {updated_by_name}",
-                f"- Р’СЃС‚Р°РІР»РµРЅРѕ РЅРѕРІС‹С… СЃС‚СЂРѕРє: {inserted}",
+                "Обновление минимальных баллов ЕГЭ:",
+                f"- Обновлено по subject_id: {updated}",
+                f"- Обновлено по name: {updated_by_name}",
+                f"- Вставлено новых строк: {inserted}",
             ]
         )
 
@@ -699,7 +699,7 @@ async def directories_min_scores_action(request: Request, db: Session = Depends(
                 "loader_ok": None,
                 "loader_output": None,
                 "scores_error": None,
-                "scores_ok": "РњРёРЅРёРјР°Р»СЊРЅС‹Рµ Р±Р°Р»Р»С‹ РѕР±РЅРѕРІР»РµРЅС‹.",
+                "scores_ok": "Минимальные баллы обновлены.",
                 "scores_output": score_output,
             },
         )
@@ -725,21 +725,7 @@ async def directories_min_scores_action(request: Request, db: Session = Depends(
         )
 
 
-@router.get("/data/validate")
-def validation_page(request: Request, db: Session = Depends(get_db)):
-    user = require_user(request, db)
-    jobs = db.query(ImportJob).order_by(ImportJob.created_at.desc()).limit(20).all()
-    return render("validation.html", {"request": request, "user": user, "jobs": jobs})
-
-
-@router.get("/data/history")
-def history_page(request: Request, db: Session = Depends(get_db)):
-    user = require_user(request, db)
-    jobs = db.query(ImportJob).order_by(ImportJob.created_at.desc()).all()
-    return render("history.html", {"request": request, "user": user, "jobs": jobs})
-
-
-# 3 РџРѕРёСЃРє Рё РєР°СЂС‚РѕС‡РєР° С€РєРѕР»С‹
+# 3 Поиск и карточка школы
 def _build_search_filters(
     *,
     q: str,
@@ -1111,11 +1097,6 @@ def search_export(
     )
 
 
-@router.get("/search/calc/{school_id}")
-def calc_page(school_id: int):
-    return RedirectResponse(f"/search/school/{school_id}", status_code=303)
-
-
 @router.get("/search/school/{school_id}/export")
 def school_card_export(request: Request, school_id: int, db: Session = Depends(get_db)):
     require_user(request, db)
@@ -1309,7 +1290,7 @@ def school_card(request: Request, school_id: int, db: Session = Depends(get_db))
     )
 
 
-# 4 РџРѕРґР±РѕСЂ Рё СЂРµР№С‚РёРЅРі
+# 4 Подбор и рейтинг
 def _build_rating_query(
     *,
     q: str,
@@ -1750,41 +1731,7 @@ def rating_export(
     )
 
 
-@router.post("/rating/filters")
-def rating_filters(request: Request, program_id: int = Form(...), db: Session = Depends(get_db)):
-    require_user(request, db)
-    location = f"/rating/profile?{urlencode([('program_ids', str(program_id))], doseq=True)}"
-    return RedirectResponse(location, status_code=303)
-
-
-@router.post("/rating/calc")
-def rating_calc(
-    request: Request,
-    program_id: int = Form(...),
-    year: int = Form(2025),
-    min_graduates: int = Form(10),
-    w_graduates: float = Form(0.25),
-    w_avg_score: float = Form(0.45),
-    w_match_share: float = Form(0.20),
-    w_threshold_share: float = Form(0.10),
-    db: Session = Depends(get_db),
-):
-    require_user(request, db)
-    params = [
-        ("program_ids", str(program_id)),
-        ("year", str(year)),
-        ("min_graduates", str(min_graduates)),
-        ("w_graduates", str(w_graduates)),
-        ("w_avg_score", str(w_avg_score)),
-        ("w_match_share", str(w_match_share)),
-        ("w_threshold_share", str(w_threshold_share)),
-        ("enforce_subject_threshold", "1"),
-    ]
-    location = f"/rating/profile?{urlencode(params, doseq=True)}"
-    return RedirectResponse(location, status_code=303)
-
-
-# 5 РќР°СЃС‚СЂРѕР№РєРё Р°РЅР°Р»РёР·Р° (Р·Р°РіР»СѓС€РєРё)
+# 5 Настройки анализа (заглушки)
 @router.get("/settings")
 def settings_home(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
@@ -1794,22 +1741,22 @@ def settings_home(request: Request, db: Session = Depends(get_db)):
 @router.get("/settings/filters")
 def settings_filters(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
-    return render("stub_page.html", {"request": request, "user": user, "title": "РљРѕРЅСЃС‚СЂСѓРєС‚РѕСЂ С„РёР»СЊС‚СЂРѕРІ", "back_url": "/settings"})
+    return render("stub_page.html", {"request": request, "user": user, "title": "Конструктор фильтров", "back_url": "/settings"})
 
 
 @router.get("/settings/weights")
 def settings_weights(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
-    return render("stub_page.html", {"request": request, "user": user, "title": "РњРµС‚СЂРёРєРё Рё РІРµСЃР°", "back_url": "/settings"})
+    return render("stub_page.html", {"request": request, "user": user, "title": "Метрики и веса", "back_url": "/settings"})
 
 
 @router.get("/settings/profiles")
 def settings_profiles(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
-    return render("stub_page.html", {"request": request, "user": user, "title": "РџСЂРѕС„РёР»Рё СЂР°СЃС‡С‘С‚Р°", "back_url": "/settings"})
+    return render("stub_page.html", {"request": request, "user": user, "title": "Профили расчёта", "back_url": "/settings"})
 
 
-# 6 РћС‚С‡С‘С‚РЅРѕСЃС‚СЊ
+# 6 Отчётность
 @router.get("/reports")
 def reports_home(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
@@ -1833,7 +1780,7 @@ def _render_report_generate_page(
         runs = fetch_rating_runs(limit=200)
     except Exception as exc:
         traceback.print_exc()
-        page_error = page_error or f"Failed to load rating runs list: {exc}"
+        page_error = page_error or f"Не удалось загрузить список расчетов: {exc}"
 
     run_ids = {int(item["run_id"]) for item in runs}
     if selected_run_id is not None and selected_run_id not in run_ids:
@@ -1853,7 +1800,7 @@ def _render_report_generate_page(
             run_schools = fetch_run_schools(selected_run_id, limit=3000)
         except Exception as exc:
             traceback.print_exc()
-            page_error = page_error or f"Failed to load schools for run #{selected_run_id}: {exc}"
+            page_error = page_error or f"Не удалось загрузить школы для расчета #{selected_run_id}: {exc}"
 
     return render(
         "report_generate.html",
@@ -1913,7 +1860,7 @@ def report_generate_action(
             selected_school_id=school_id_value,
             report_type=report_type,
             report_format=report_format,
-            error="Select run_id.",
+            error="Выберите расчет (run_id).",
         )
 
     try:
@@ -1933,7 +1880,7 @@ def report_generate_action(
             selected_school_id=school_id_value,
             report_type=report_type,
             report_format=report_format,
-            error="Failed to generate report. Check application log.",
+            error="Не удалось сформировать отчет. Проверьте лог приложения.",
         )
 
     if created_count <= 0:
@@ -1944,7 +1891,7 @@ def report_generate_action(
             selected_school_id=school_id_value,
             report_type=report_type,
             report_format=report_format,
-            error="No schools found for selected run_id.",
+            error="Для выбранного run_id нет школ для отчета.",
         )
 
     return RedirectResponse(
@@ -2099,7 +2046,7 @@ def report_archive(
     reports = fetch_report_archive_rows(limit=300)
     ok_message: str | None = None
     if generated_value is not None and generated_value > 0 and run_id_value is not None:
-        ok_message = f"\u0421\u0444\u043e\u0440\u043c\u0438\u0440\u043e\u0432\u0430\u043d\u043e \u043e\u0442\u0447\u0435\u0442\u043e\u0432: {generated_value} (run_id={run_id_value})."
+        ok_message = f"Сформировано отчетов: {generated_value} (run_id={run_id_value})."
     return render(
         "report_archive.html",
         {
@@ -2127,7 +2074,7 @@ def calc_history(request: Request, db: Session = Depends(get_db)):
     )
 
 
-# 7 РђРґРјРёРЅРёСЃС‚СЂРёСЂРѕРІР°РЅРёРµ (С‚РѕР»СЊРєРѕ admin)
+# 7 Администрирование (только admin)
 @router.get("/admin")
 def admin_home(request: Request, db: Session = Depends(get_db)):
     user = require_admin(request, db)
@@ -2137,7 +2084,7 @@ def admin_home(request: Request, db: Session = Depends(get_db)):
 @router.get("/admin/roles")
 def admin_roles(request: Request, db: Session = Depends(get_db)):
     user = require_admin(request, db)
-    return render("stub_page.html", {"request": request, "user": user, "title": "Р РѕР»Рё Рё РїСЂР°РІР°", "back_url": "/admin"})
+    return render("stub_page.html", {"request": request, "user": user, "title": "Роли и права", "back_url": "/admin"})
 
 
 @router.get("/admin/directories")
@@ -2149,5 +2096,5 @@ def admin_directories(request: Request, db: Session = Depends(get_db)):
 @router.get("/admin/methodologies")
 def admin_methodologies(request: Request, db: Session = Depends(get_db)):
     user = require_admin(request, db)
-    return render("stub_page.html", {"request": request, "user": user, "title": "РњРµС‚РѕРґРёРєРё", "back_url": "/admin"})
+    return render("stub_page.html", {"request": request, "user": user, "title": "Методики", "back_url": "/admin"})
 
