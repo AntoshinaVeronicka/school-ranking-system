@@ -295,10 +295,39 @@ def fetch_region_ids(cur, regions: Sequence[str]) -> Dict[str, int]:
     return {name: rid for rid, name in cur.fetchall()}
 
 
+def _municipality_norm_key(name: str) -> str:
+    return normalize_municipality_name(name).casefold().replace("ё", "е")
+
+
+def _municipality_sql_norm(expr: str) -> str:
+    squeezed = f"regexp_replace(btrim({expr}), '[[:space:]]+', ' ', 'g')"
+    with_city_prefix = f"regexp_replace({squeezed}, '^[[:space:]]*г(\\.|[[:space:]]+)', 'город ', 'i')"
+    with_city_prefix = f"regexp_replace({with_city_prefix}, '^[[:space:]]*город[[:space:]]+', 'город ', 'i')"
+    return f"replace(lower({with_city_prefix}), 'ё', 'е')"
+
+
 def insert_municipalities(cur, rows: Sequence[Tuple[int, str]]) -> None:
     if not rows:
         return
-    q = """
+
+    dedup_rows: List[Tuple[int, str]] = []
+    seen: Set[Tuple[int, str]] = set()
+    for region_id, name in rows:
+        canon = normalize_municipality_name(name)
+        if not canon:
+            continue
+        key = (region_id, _municipality_norm_key(canon))
+        if key in seen:
+            continue
+        seen.add(key)
+        dedup_rows.append((region_id, canon))
+
+    if not dedup_rows:
+        return
+
+    d_name_norm = _municipality_sql_norm("d.name")
+    m_name_norm = _municipality_sql_norm("m.name")
+    q = f"""
         WITH v(region_id, name) AS (VALUES %s),
         dedup AS (
             SELECT DISTINCT region_id, name
@@ -311,33 +340,101 @@ def insert_municipalities(cur, rows: Sequence[Tuple[int, str]]) -> None:
             SELECT 1
             FROM edu.municipality m
             WHERE m.region_id = d.region_id
-              AND lower(m.name) = lower(d.name)
+              AND {m_name_norm} = {d_name_norm}
         )
     """
-    execute_values(cur, q, list(rows), page_size=1000)
+    execute_values(cur, q, dedup_rows, page_size=1000)
 
 
 def fetch_municipality_ids(cur, rows: Sequence[Tuple[int, str]]) -> Dict[Tuple[int, str], int]:
     if not rows:
         return {}
 
-    query = """
+    dedup_rows: List[Tuple[int, str]] = []
+    seen: Set[Tuple[int, str]] = set()
+    for region_id, name in rows:
+        canon = normalize_municipality_name(name)
+        if not canon:
+            continue
+        key = (region_id, _municipality_norm_key(canon))
+        if key in seen:
+            continue
+        seen.add(key)
+        dedup_rows.append((region_id, canon))
+
+    if not dedup_rows:
+        return {}
+
+    v_name_norm = _municipality_sql_norm("v.name")
+    m_name_norm = _municipality_sql_norm("m.name")
+    query = f"""
         WITH v(region_id, name) AS (VALUES %s)
         SELECT MIN(m.municipality_id) AS municipality_id, v.region_id, v.name
         FROM v
         JOIN edu.municipality m
           ON m.region_id = v.region_id
-         AND lower(m.name) = lower(v.name)
+         AND {m_name_norm} = {v_name_norm}
         GROUP BY v.region_id, v.name
     """
-    fetched = execute_values(cur, query, list(rows), fetch=True)
-    return {(rid, name): mid for (mid, rid, name) in fetched}
+    fetched = execute_values(cur, query, dedup_rows, fetch=True)
+
+    by_norm: Dict[Tuple[int, str], int] = {}
+    for mid, rid, name in fetched:
+        key = (rid, _municipality_norm_key(name))
+        curr = by_norm.get(key)
+        if curr is None or mid < curr:
+            by_norm[key] = mid
+
+    out: Dict[Tuple[int, str], int] = {}
+    for rid, name in rows:
+        canon = normalize_municipality_name(name)
+        if not canon:
+            continue
+        key = (rid, _municipality_norm_key(canon))
+        mid = by_norm.get(key)
+        if mid is None:
+            continue
+        out[(rid, name)] = mid
+        out[(rid, canon)] = mid
+    return out
 
 
 def insert_schools(cur, rows: Sequence[Tuple[int, str]]) -> None:
-    q = """
+    src_mun_norm = _municipality_sql_norm("m.name")
+    m2_mun_norm = _municipality_sql_norm("m2.name")
+    q = f"""
+        WITH v(municipality_id, full_name, is_active) AS (VALUES %s),
+        src AS (
+            SELECT
+                v.municipality_id,
+                v.full_name,
+                v.is_active,
+                m.region_id,
+                {src_mun_norm} AS mun_name_norm
+            FROM v
+            JOIN edu.municipality m ON m.municipality_id = v.municipality_id
+        ),
+        dedup AS (
+            SELECT
+                MIN(municipality_id) AS municipality_id,
+                full_name,
+                BOOL_OR(is_active) AS is_active,
+                region_id,
+                mun_name_norm
+            FROM src
+            GROUP BY region_id, mun_name_norm, full_name
+        )
         INSERT INTO edu.school (municipality_id, full_name, is_active)
-        VALUES %s
+        SELECT d.municipality_id, d.full_name, d.is_active
+        FROM dedup d
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM edu.school s
+            JOIN edu.municipality m2 ON m2.municipality_id = s.municipality_id
+            WHERE m2.region_id = d.region_id
+              AND {m2_mun_norm} = d.mun_name_norm
+              AND s.full_name = d.full_name
+        )
         ON CONFLICT (municipality_id, full_name) DO NOTHING
     """
     execute_values(cur, q, [(mid, nm, True) for mid, nm in rows], page_size=1000)
@@ -347,11 +444,35 @@ def fetch_school_ids(cur, rows: Sequence[Tuple[int, str]]) -> Dict[Tuple[int, st
     if not rows:
         return {}
 
-    query = """
-        WITH v(municipality_id, full_name) AS (VALUES %s)
-        SELECT s.school_id, s.municipality_id, s.full_name
-        FROM edu.school s
-        JOIN v ON v.municipality_id = s.municipality_id AND v.full_name = s.full_name
+    src_mun_norm = _municipality_sql_norm("m.name")
+    m2_mun_norm = _municipality_sql_norm("m2.name")
+    query = f"""
+        WITH v(municipality_id, full_name) AS (VALUES %s),
+        v_norm AS (
+            SELECT
+                v.municipality_id AS src_mid,
+                v.full_name AS src_full_name,
+                m.region_id,
+                {src_mun_norm} AS mun_name_norm
+            FROM v
+            JOIN edu.municipality m ON m.municipality_id = v.municipality_id
+        ),
+        candidates AS (
+            SELECT
+                v.src_mid,
+                v.src_full_name,
+                s.school_id
+            FROM v_norm v
+            JOIN edu.municipality m2
+              ON m2.region_id = v.region_id
+             AND {m2_mun_norm} = v.mun_name_norm
+            JOIN edu.school s
+              ON s.municipality_id = m2.municipality_id
+             AND s.full_name = v.src_full_name
+        )
+        SELECT MIN(c.school_id) AS school_id, c.src_mid, c.src_full_name
+        FROM candidates c
+        GROUP BY c.src_mid, c.src_full_name
     """
     fetched = execute_values(cur, query, list(rows), fetch=True)
     return {(mid, nm): sid for (sid, mid, nm) in fetched}

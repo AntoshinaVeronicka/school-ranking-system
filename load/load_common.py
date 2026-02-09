@@ -31,13 +31,14 @@ def normalize_municipality_name(s: Any) -> str:
     Каноническая форма муниципалитета:
     - схлопываем пробелы;
     - убираем пустые/nan-like значения;
-    - нормализуем префикс "город " к нижнему регистру.
+    - нормализуем префикс города к виду "город ".
     """
     text = norm_spaces(s)
     if not text:
         return ""
     if text.casefold() in {"nan", "none", "nat"}:
         return ""
+    text = re.sub(r"^\s*г(?:\.|\s+)", "город ", text, flags=re.IGNORECASE)
     text = re.sub(r"^\s*город\s+", "город ", text, flags=re.IGNORECASE)
     return text
 
@@ -237,7 +238,7 @@ def make_school_key(name: str) -> str:
 
 
 def make_muni_key(name: Any) -> str:
-    s = norm_spaces(name)
+    s = normalize_municipality_name(name)
     s = s.upper().replace("Ё", "Е")
     return re.sub(r"[^0-9A-ZА-Я]+", "", s)
 

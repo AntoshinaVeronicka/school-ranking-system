@@ -4,19 +4,150 @@
 
 {% if school %}
   <div class="card">
-    <p><b>Регион:</b> {{ school.region }}</p>
-    <p><b>Муниципалитет:</b> {{ school.municipality }}</p>
-    <p><b>Школа:</b> {{ school.name }}</p>
+    <p><b>Регион:</b> {{ school.region_name }}</p>
+    <p><b>Муниципалитет:</b> {{ school.municipality_name }}</p>
+    <p><b>Школа:</b> {{ school.full_name }}</p>
+    <p><b>Активна:</b> {{ "да" if school.is_active else "нет" }}</p>
+    <p>
+      <b>Профили:</b>
+      {% if school.profiles %}
+        {{ school.profiles | join(", ") }}
+      {% else %}
+        —
+      {% endif %}
+    </p>
+  </div>
 
-    <div class="row">
-      <a class="btn" href="/reports/generate">Выгрузка и отчёт</a>
-      <a class="btn btn-ghost" href="/search">Назад</a>
-    </div>
+  <div class="card">
+    <h2>Внешние ключи</h2>
+    {% if external_keys %}
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Источник</th>
+            <th>Ключ</th>
+            <th>Нормализованное имя</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for row in external_keys %}
+          <tr>
+            <td>{{ row.source_name }}</td>
+            <td>{{ row.external_key }}</td>
+            <td>{{ row.normalized_name if row.normalized_name else "—" }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">Нет записей.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>ЕГЭ за все доступные годы</h2>
+    {% if ege_timeline %}
+      {% for period in ege_timeline %}
+        <h3>{{ period.year }} / {{ period.kind }} (выпускников: {{ period.graduates_total }})</h3>
+        {% if period.subjects %}
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Предмет</th>
+                <th>Участники</th>
+                <th>Не преодолели порог</th>
+                <th>80-99</th>
+                <th>100 баллов</th>
+                <th>Средний балл</th>
+                <th>Выбрали</th>
+              </tr>
+            </thead>
+            <tbody>
+            {% for s in period.subjects %}
+              <tr>
+                <td>{{ s.subject_name }}</td>
+                <td>{{ s.participants_cnt if s.participants_cnt is not none else "—" }}</td>
+                <td>{{ s.not_passed_cnt if s.not_passed_cnt is not none else "—" }}</td>
+                <td>{{ s.high_80_99_cnt if s.high_80_99_cnt is not none else "—" }}</td>
+                <td>{{ s.score_100_cnt if s.score_100_cnt is not none else "—" }}</td>
+                <td>{{ s.avg_score if s.avg_score is not none else "—" }}</td>
+                <td>{{ s.chosen_cnt if s.chosen_cnt is not none else "—" }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="muted">Нет предметной статистики для этого периода.</p>
+        {% endif %}
+      {% endfor %}
+    {% else %}
+      <p class="muted">Статистика ЕГЭ отсутствует.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Статистика приёма</h2>
+    {% if admission_stats %}
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Год</th>
+            <th>Заявлений</th>
+            <th>Зачислено</th>
+            <th>Средний балл зачисленных</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for row in admission_stats %}
+          <tr>
+            <td>{{ row.year }}</td>
+            <td>{{ row.applicants_cnt }}</td>
+            <td>{{ row.enrolled_cnt }}</td>
+            <td>{{ row.enrolled_avg_score if row.enrolled_avg_score is not none else "—" }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">Статистика приёма отсутствует.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Профориентационные мероприятия</h2>
+    {% if prof_events %}
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Год</th>
+            <th>Количество мероприятий</th>
+            <th>Охват</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for row in prof_events %}
+          <tr>
+            <td>{{ row.year }}</td>
+            <td>{{ row.events_cnt }}</td>
+            <td>{{ row.coverage_cnt }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">Данные по профориентации отсутствуют.</p>
+    {% endif %}
+  </div>
+
+  <div class="row">
+    <a class="btn" href="/reports/generate">Выгрузка и отчёт</a>
+    <a class="btn btn-ghost" href="/search/school/{{ school.school_id }}/export">Экспорт карточки в Excel</a>
+    <a class="btn btn-ghost" href="{{ back_url }}">Назад</a>
   </div>
 {% else %}
   <div class="alert">Школа не найдена.</div>
   <div class="row">
-    <a class="btn btn-ghost" href="/search">Назад</a>
+    <a class="btn btn-ghost" href="{{ back_url if back_url else '/search' }}">Назад</a>
   </div>
 {% endif %}
 {% endblock %}

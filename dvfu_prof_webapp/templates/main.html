@@ -1,16 +1,50 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Главное меню</h1>
+<section class="card menu-hero">
+  <div class="menu-hero-main">
+    <h1>Главное меню</h1>
+    <p class="muted">
+      Поможет работать с данными о школах: вы можете загрузить данные, найти нужную школу, посмотреть её показатели, построить рейтинг и выгрузить отчёт.
+    </p>
+  </div>
+</section>
 
-<div class="grid">
-  <a class="tile" href="/data">Данные и загрузки</a>
-  <a class="tile" href="/search">Поиск школ</a>
-  <a class="tile" href="/rating/profile">Подбор и рейтинг</a>
-  <a class="tile" href="/settings">Настройки анализа</a>
-  <a class="tile" href="/reports/generate">Выгрузки</a>
-  <a class="tile" href="/reports/calc-history">История расчётов</a>
+<section class="menu-grid">
+  <a class="menu-tile menu-tile-data" href="/data">
+    <h2>Данные и загрузки</h2>
+    <p>Импорт ЕГЭ, приема, профориентации, справочников и контроль загрузок.</p>
+  </a>
+
+  <a class="menu-tile menu-tile-search" href="/search">
+    <h2>Поиск школ</h2>
+    <p>Фильтрация, карточка школы, статистика по годам и экспорт результатов.</p>
+  </a>
+
+  <a class="menu-tile menu-tile-rating" href="/rating/profile">
+    <h2>Подбор и рейтинг</h2>
+    <p>Настройка профиля расчета и построение рейтинга школ по показателям.</p>
+  </a>
+
+  <a class="menu-tile menu-tile-settings" href="/settings">
+    <h2>Настройки анализа</h2>
+    <p>Фильтры, веса и профили расчета для управляемой аналитики.</p>
+  </a>
+
+  <a class="menu-tile menu-tile-reports" href="/reports/generate">
+    <h2>Отчетность</h2>
+    <p>Формирование выгрузок и отчетов для выбранных школ и наборов данных.</p>
+  </a>
+
+  <a class="menu-tile menu-tile-history" href="/reports/calc-history">
+    <h2>История расчетов</h2>
+    <p>Журнал запусков, навигация к рейтингам и карточкам школ.</p>
+  </a>
+
   {% if user.is_admin %}
-    <a class="tile" href="/admin">Администрирование</a>
+    <a class="menu-tile menu-tile-admin" href="/admin">
+      <h2>Администрирование</h2>
+      <p>Управление ролями, методиками и системными параметрами доступа.</p>
+    </a>
   {% endif %}
-</div>
+</section>
 {% endblock %}

@@ -1,19 +1,437 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Подбор по профилю</h1>
+<h1>Подбор и рейтинг школ</h1>
 
-<form method="post" action="/rating/filters" class="card">
-  <label>Направление подготовки
-    <select name="program_id" required>
-      {% for p in programs %}
-        <option value="{{ p.id }}">{{ p.institute }} – {{ p.name }}</option>
-      {% endfor %}
-    </select>
+<form method="get" action="/rating/profile" class="card search-form rating-form">
+  <div class="search-grid rating-grid">
+    <label class="field field-q">Название школы (поиск по вхождению)
+      <input name="q" value="{{ filters.q }}" placeholder="Например: лицей №23">
+    </label>
+
+    <label class="field">Год
+      <select name="year">
+        <option value="">Все</option>
+        {% for y in years %}
+          <option value="{{ y.year }}" {% if filters.year == y.year %}selected{% endif %}>{{ y.year }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="field">План/факт
+      <select name="kind">
+        <option value="">Все</option>
+        {% for k in kinds %}
+          <option value="{{ k.kind }}" {% if filters.kind == k.kind %}selected{% endif %}>{{ k.kind }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="field">Регион
+      <select name="region_id" id="rating_region_id">
+        <option value="">Все</option>
+        {% for r in regions %}
+          <option value="{{ r.region_id }}" {% if filters.region_id == r.region_id %}selected{% endif %}>{{ r.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="field">Муниципалитет
+      <select name="municipality_id" id="rating_municipality_id">
+        <option value="">Все</option>
+        {% for m in municipalities %}
+          <option value="{{ m.municipality_id }}" {% if filters.municipality_id == m.municipality_id %}selected{% endif %}>{{ m.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="field">Строк в рейтинге
+      <select name="limit">
+        {% for n in [50, 100, 200, 300, 500, 1000] %}
+          <option value="{{ n }}" {% if filters.limit == n %}selected{% endif %}>{{ n }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="field">Мин. среднее выпускников
+      <input type="number" name="min_graduates" min="0" value="{{ filters.min_graduates }}">
+    </label>
+
+    <label class="field">Мин. средний балл
+      <input type="number" name="min_avg_score" min="0" max="100" step="0.1" value="{{ filters.min_avg_score }}">
+    </label>
+
+    <label class="field">Вес: выпускники
+      <input type="number" name="w_graduates" min="0" step="0.01" value="{{ filters.w_graduates }}">
+    </label>
+
+    <label class="field">Вес: средний балл
+      <input type="number" name="w_avg_score" min="0" step="0.01" value="{{ filters.w_avg_score }}">
+    </label>
+
+    <label class="field">Вес: соответствие программам
+      <input type="number" name="w_match_share" min="0" step="0.01" value="{{ filters.w_match_share }}">
+    </label>
+
+    <label class="field">Вес: пороги ЕГЭ
+      <input type="number" name="w_threshold_share" min="0" step="0.01" value="{{ filters.w_threshold_share }}">
+    </label>
+
+    <div class="field field-wide">
+      <span class="picker-label">Институты</span>
+      <div class="multi-dropdown" data-role="dropdown">
+        <button type="button" class="multi-dropdown-toggle" data-role="toggle" aria-expanded="false">
+          <span class="multi-dropdown-value" data-role="label">Не выбрано</span>
+          <span class="multi-dropdown-arrow" aria-hidden="true">▾</span>
+        </button>
+        <div class="multi-dropdown-menu" data-role="menu">
+          <div class="multi-dropdown-options">
+            {% for i in institutes %}
+              <label class="multi-dropdown-option">
+                <input
+                  type="checkbox"
+                  name="institute_ids"
+                  value="{{ i.institute_id }}"
+                  data-title="{{ i.name }}"
+                  {% if i.institute_id in filters.institute_ids %}checked{% endif %}
+                >
+                <span class="multi-dropdown-option-text">{{ i.name }}</span>
+                <span class="multi-dropdown-check" aria-hidden="true">✓</span>
+              </label>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="field field-wide">
+      <span class="picker-label">Профили школы</span>
+      <div class="multi-dropdown" data-role="dropdown">
+        <button type="button" class="multi-dropdown-toggle" data-role="toggle" aria-expanded="false">
+          <span class="multi-dropdown-value" data-role="label">Не выбрано</span>
+          <span class="multi-dropdown-arrow" aria-hidden="true">▾</span>
+        </button>
+        <div class="multi-dropdown-menu" data-role="menu">
+          <div class="multi-dropdown-options">
+            {% for p in profiles %}
+              <label class="multi-dropdown-option">
+                <input
+                  type="checkbox"
+                  name="profile_ids"
+                  value="{{ p.profile_id }}"
+                  data-title="{{ p.name }}"
+                  {% if p.profile_id in filters.profile_ids %}checked{% endif %}
+                >
+                <span class="multi-dropdown-option-text">{{ p.name }}</span>
+                <span class="multi-dropdown-check" aria-hidden="true">✓</span>
+              </label>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="field field-wide">
+      <span class="picker-label">Наличие сданных предметов ЕГЭ</span>
+      <div class="multi-dropdown" data-role="dropdown">
+        <button type="button" class="multi-dropdown-toggle" data-role="toggle" aria-expanded="false">
+          <span class="multi-dropdown-value" data-role="label">Не выбрано</span>
+          <span class="multi-dropdown-arrow" aria-hidden="true">▾</span>
+        </button>
+        <div class="multi-dropdown-menu" data-role="menu">
+          <div class="multi-dropdown-options">
+            {% for s in subjects %}
+              <label class="multi-dropdown-option">
+                <input
+                  type="checkbox"
+                  name="subject_ids"
+                  value="{{ s.subject_id }}"
+                  data-title="{{ s.name }}"
+                  {% if s.subject_id in filters.subject_ids %}checked{% endif %}
+                >
+                <span class="multi-dropdown-option-text">{{ s.name }}</span>
+                <span class="multi-dropdown-check" aria-hidden="true">✓</span>
+              </label>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="field field-wide" id="program_picker_container">
+      <span class="picker-label">Направления (программы)</span>
+      <div class="multi-dropdown" data-role="dropdown">
+        <button type="button" class="multi-dropdown-toggle" data-role="toggle" aria-expanded="false">
+          <span class="multi-dropdown-value" data-role="label">Не выбрано</span>
+          <span class="multi-dropdown-arrow" aria-hidden="true">▾</span>
+        </button>
+        <div class="multi-dropdown-menu" data-role="menu">
+          <div class="multi-dropdown-options" id="program_picker_options">
+            {% for p in programs %}
+              {% set title = ((p.code ~ ' ') if p.code else '') ~ p.name %}
+              <label class="multi-dropdown-option">
+                <input
+                  type="checkbox"
+                  name="program_ids"
+                  value="{{ p.program_id }}"
+                  data-title="{{ title }}"
+                  {% if p.program_id in filters.program_ids %}checked{% endif %}
+                >
+                <span class="multi-dropdown-option-text">
+                  {{ p.institute_name }}: {% if p.code %}{{ p.code }} {% endif %}{{ p.name }}
+                </span>
+                <span class="multi-dropdown-check" aria-hidden="true">✓</span>
+              </label>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <label class="checkbox-row">
+    <input type="checkbox" name="enforce_subject_threshold" value="1" {% if filters.enforce_subject_threshold %}checked{% endif %}>
+    Проверять пороги предметов (минимальные баллы ЕГЭ)
   </label>
 
-  <div class="row">
-    <button class="btn" type="submit">Выбрать</button>
+  <div class="row search-actions">
+    <button class="btn" type="submit">Рассчитать рейтинг</button>
+    <a class="btn btn-ghost" href="/rating/export{% if current_query %}?{{ current_query }}{% endif %}">Экспорт в Excel</a>
+    <a class="btn btn-ghost" href="/rating/profile">Сбросить</a>
     <a class="btn btn-ghost" href="/">В меню</a>
   </div>
 </form>
+
+{% if program_requirements %}
+  <div class="card">
+    <div class="results-head">
+      <h2>Требования выбранных направлений</h2>
+      <p class="muted">Сопоставление школ выполняется по обязательным предметам и группе choice-предметов.</p>
+    </div>
+    <div class="requirements-grid">
+      {% for p in program_requirements %}
+        <article class="requirements-card">
+          <h3>{% if p.code %}{{ p.code }} {% endif %}{{ p.name }}</h3>
+          <p class="muted">{{ p.institute_name }}</p>
+          <p><b>Обязательные:</b>
+            {% if p.required_subjects %}
+              {{ p.required_subjects | map(attribute='name') | join(', ') }}
+            {% else %}
+              —
+            {% endif %}
+          </p>
+          <p><b>Choice:</b>
+            {% if p.choice_subjects %}
+              {{ p.choice_subjects | map(attribute='name') | join(', ') }}
+            {% else %}
+              —
+            {% endif %}
+          </p>
+        </article>
+      {% endfor %}
+    </div>
+  </div>
+{% endif %}
+
+{% if has_query %}
+  <div class="card results-card">
+    <div class="results-head">
+      <h2>Рейтинг школ</h2>
+      <p class="muted results-count">Найдено: {{ total }}</p>
+    </div>
+
+    {% if ranked %}
+      <div class="table-wrap">
+        <table class="table table-clickable rating-results-table">
+          <thead>
+            <tr>
+              <th>Место</th>
+              <th>Регион</th>
+              <th>Муниципалитет</th>
+              <th>Школа</th>
+              <th>Профили</th>
+              <th>Среднее выпускников</th>
+              <th>Средний балл ЕГЭ</th>
+              <th>Соответствие программам</th>
+              <th>Порог ЕГЭ</th>
+              <th>Итоговый рейтинг</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in ranked %}
+              <tr data-href="/search/school/{{ r.school_id }}?src=rating{% if current_query %}&{{ current_query }}{% endif %}">
+                <td>{{ r.rank_pos }}</td>
+                <td>{{ r.region_name }}</td>
+                <td>{{ r.municipality_name }}</td>
+                <td>{{ r.full_name }}</td>
+                <td>{{ r.profile_names if r.profile_names else "—" }}</td>
+                <td>{{ r.avg_graduates if r.avg_graduates is not none else "—" }}</td>
+                <td>{{ r.avg_score_all if r.avg_score_all is not none else "—" }}</td>
+                <td>{{ (r.match_share * 100)|round(1) }}%</td>
+                <td>{{ (r.threshold_share * 100)|round(1) }}%</td>
+                <td>{{ r.rating_score }}</td>
+                <td>
+                  <a class="btn btn-small" href="/search/school/{{ r.school_id }}?src=rating{% if current_query %}&{{ current_query }}{% endif %}" onclick="event.stopPropagation();">Карточка</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="alert">По заданным фильтрам подходящих школ не найдено.</div>
+    {% endif %}
+  </div>
+{% else %}
+  <div class="card">
+    <p class="muted">Выберите фильтры и нажмите «Рассчитать рейтинг», чтобы построить список школ.</p>
+  </div>
+{% endif %}
+
+<script>
+  const regionSelect = document.getElementById("rating_region_id");
+  const municipalitySelect = document.getElementById("rating_municipality_id");
+  const programsOptionsNode = document.getElementById("program_picker_options");
+
+  function initMultiDropdown(root) {
+    const toggle = root.querySelector("[data-role='toggle']");
+    const labelNode = root.querySelector("[data-role='label']");
+    const checkboxes = Array.from(root.querySelectorAll("input[type='checkbox']"));
+    if (!toggle || !labelNode || checkboxes.length === 0) return;
+
+    const close = () => {
+      root.classList.remove("open");
+      toggle.setAttribute("aria-expanded", "false");
+    };
+    const open = () => {
+      root.classList.add("open");
+      toggle.setAttribute("aria-expanded", "true");
+    };
+
+    const updateLabel = () => {
+      const selected = checkboxes.filter((cb) => cb.checked).map((cb) => cb.dataset.title || cb.value);
+      if (selected.length === 0) {
+        labelNode.textContent = "Не выбрано";
+      } else if (selected.length <= 2) {
+        labelNode.textContent = selected.join(", ");
+      } else {
+        labelNode.textContent = `Выбрано: ${selected.length}`;
+      }
+      root.classList.toggle("has-value", selected.length > 0);
+    };
+
+    toggle.addEventListener("click", (e) => {
+      e.preventDefault();
+      root.classList.contains("open") ? close() : open();
+    });
+
+    checkboxes.forEach((cb) => cb.addEventListener("change", updateLabel));
+    document.addEventListener("click", (e) => { if (!root.contains(e.target)) close(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+    updateLabel();
+  }
+
+  function initAllDropdowns() {
+    document.querySelectorAll(".multi-dropdown").forEach((node) => {
+      if (!node.dataset.inited) {
+        node.dataset.inited = "1";
+        initMultiDropdown(node);
+      }
+    });
+  }
+
+  async function reloadMunicipalities() {
+    if (!regionSelect || !municipalitySelect) return;
+    const regionId = regionSelect.value;
+    municipalitySelect.innerHTML = '<option value="">Все</option>';
+    if (!regionId) return;
+    const resp = await fetch(`/search/municipalities?region_id=${encodeURIComponent(regionId)}`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    (data.items || []).forEach((item) => {
+      const opt = document.createElement("option");
+      opt.value = item.municipality_id;
+      opt.textContent = item.name;
+      municipalitySelect.appendChild(opt);
+    });
+  }
+
+  async function reloadPrograms() {
+    if (!programsOptionsNode) return;
+    const selected = new Set(
+      Array.from(programsOptionsNode.querySelectorAll("input[type='checkbox']:checked")).map((cb) => cb.value)
+    );
+    const selectedInstituteIds = Array.from(
+      document.querySelectorAll("input[name='institute_ids']:checked")
+    ).map((cb) => cb.value);
+
+    let endpoint = "/rating/programs";
+    if (selectedInstituteIds.length > 0) {
+      const params = new URLSearchParams();
+      selectedInstituteIds.forEach((id) => params.append("institute_ids", id));
+      endpoint = `/rating/programs?${params.toString()}`;
+    }
+
+    const resp = await fetch(endpoint);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const items = data.items || [];
+    programsOptionsNode.innerHTML = "";
+    items.forEach((item) => {
+      const label = document.createElement("label");
+      label.className = "multi-dropdown-option";
+
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.name = "program_ids";
+      input.value = String(item.program_id);
+      const title = `${item.code ? item.code + " " : ""}${item.name}`;
+      input.dataset.title = title;
+      if (selected.has(input.value)) {
+        input.checked = true;
+      }
+
+      const text = document.createElement("span");
+      text.className = "multi-dropdown-option-text";
+      text.textContent = `${item.institute_name}: ${title}`;
+
+      const check = document.createElement("span");
+      check.className = "multi-dropdown-check";
+      check.setAttribute("aria-hidden", "true");
+      check.textContent = "✓";
+
+      label.appendChild(input);
+      label.appendChild(text);
+      label.appendChild(check);
+      programsOptionsNode.appendChild(label);
+    });
+
+    const root = programsOptionsNode.closest(".multi-dropdown");
+    if (root) {
+      root.dataset.inited = "";
+      initAllDropdowns();
+    }
+  }
+
+  if (regionSelect) {
+    regionSelect.addEventListener("change", () => {
+      reloadMunicipalities().catch((e) => console.error(e));
+    });
+  }
+
+  document.querySelectorAll("input[name='institute_ids']").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      reloadPrograms().catch((e) => console.error(e));
+    });
+  });
+
+  initAllDropdowns();
+
+  document.querySelectorAll("tr[data-href]").forEach((row) => {
+    row.addEventListener("click", () => {
+      const href = row.getAttribute("data-href");
+      if (href) window.location.href = href;
+    });
+  });
+</script>
 {% endblock %}

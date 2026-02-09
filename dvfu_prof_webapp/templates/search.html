@@ -2,56 +2,281 @@
 {% block content %}
 <h1>Поиск школ</h1>
 
-<form method="post" action="/search" class="card">
-  <div class="row">
-    <label class="grow">Поиск (по названию)
-      <input name="q" value="{{ q }}">
+<form method="get" action="/search" class="card search-form">
+  <div class="search-grid">
+    <label class="field field-q">Название школы (поиск по вхождению)
+      <input name="q" value="{{ filters.q }}" placeholder="Например: лицей №23">
     </label>
-    <label>Год
-      <input name="year" type="number" value="{{ year }}" min="2000" max="2100">
-    </label>
-    <label>Направление
-      <select name="program_id">
-        <option value="">–</option>
-        {% for p in programs %}
-          <option value="{{ p.id }}" {% if program_id==p.id %}selected{% endif %}>{{ p.institute }} – {{ p.name }}</option>
+
+    <label class="field">Год
+      <select name="year">
+        <option value="">Все</option>
+        {% for y in years %}
+          <option value="{{ y.year }}" {% if filters.year == y.year %}selected{% endif %}>{{ y.year }}</option>
         {% endfor %}
       </select>
     </label>
+
+    <label class="field">План/факт
+      <select name="kind">
+        <option value="">Все</option>
+        {% for k in kinds %}
+          <option value="{{ k.kind }}" {% if filters.kind == k.kind %}selected{% endif %}>{{ k.kind }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="field">Регион
+      <select name="region_id" id="region_id">
+        <option value="">Все</option>
+        {% for r in regions %}
+          <option value="{{ r.region_id }}" {% if filters.region_id == r.region_id %}selected{% endif %}>{{ r.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="field">Муниципалитет
+      <select name="municipality_id" id="municipality_id">
+        <option value="">Все</option>
+        {% for m in municipalities %}
+          <option value="{{ m.municipality_id }}" {% if filters.municipality_id == m.municipality_id %}selected{% endif %}>{{ m.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="field">Строк на странице
+      <select name="per_page">
+        {% for n in [10, 20, 50, 100] %}
+          <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <div class="field field-wide">
+      <span class="picker-label">Профили школы</span>
+      <div class="multi-dropdown" data-role="dropdown">
+        <button type="button" class="multi-dropdown-toggle" data-role="toggle" aria-expanded="false">
+          <span class="multi-dropdown-value" data-role="label">Не выбрано</span>
+          <span class="multi-dropdown-arrow" aria-hidden="true">▾</span>
+        </button>
+        <div class="multi-dropdown-menu" data-role="menu">
+          <div class="multi-dropdown-options">
+            {% for p in profiles %}
+              <label class="multi-dropdown-option">
+                <input
+                  type="checkbox"
+                  name="profile_ids"
+                  value="{{ p.profile_id }}"
+                  data-title="{{ p.name }}"
+                  {% if p.profile_id in filters.profile_ids %}checked{% endif %}
+                >
+                <span class="multi-dropdown-option-text">{{ p.name }}</span>
+                <span class="multi-dropdown-check" aria-hidden="true">✓</span>
+              </label>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="field field-wide">
+      <span class="picker-label">Наличие сданных предметов ЕГЭ</span>
+      <div class="multi-dropdown" data-role="dropdown">
+        <button type="button" class="multi-dropdown-toggle" data-role="toggle" aria-expanded="false">
+          <span class="multi-dropdown-value" data-role="label">Не выбрано</span>
+          <span class="multi-dropdown-arrow" aria-hidden="true">▾</span>
+        </button>
+        <div class="multi-dropdown-menu" data-role="menu">
+          <div class="multi-dropdown-options">
+            {% for s in subjects %}
+              <label class="multi-dropdown-option">
+                <input
+                  type="checkbox"
+                  name="subject_ids"
+                  value="{{ s.subject_id }}"
+                  data-title="{{ s.name }}"
+                  {% if s.subject_id in filters.subject_ids %}checked{% endif %}
+                >
+                <span class="multi-dropdown-option-text">{{ s.name }}</span>
+                <span class="multi-dropdown-check" aria-hidden="true">✓</span>
+              </label>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
-  <div class="row">
-    <button class="btn" type="submit">Запрос</button>
+  <div class="row search-actions">
+    <button class="btn" type="submit">Найти</button>
+    <a class="btn btn-ghost" href="/search">Сбросить</a>
+    <a
+      class="btn btn-ghost"
+      href="/search/export{% if query_without_page %}?{{ query_without_page }}{% endif %}"
+    >Экспорт в Excel</a>
     <a class="btn btn-ghost" href="/">В меню</a>
   </div>
 </form>
 
-{% if results %}
-  <div class="card">
-    <h2>Расчёт показателей</h2>
-    <table class="table">
-      <thead>
-        <tr>
-          <th>Школа</th>
-          <th>Выпускники</th>
-          <th>Средний балл (среднее по предметам)</th>
-          <th>Доля соответствия</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-      {% for r in results %}
-        <tr>
-          <td>{{ r.region }} / {{ r.municipality }} / {{ r.name }}</td>
-          <td>{{ r.graduates }}</td>
-          <td>{{ "%.2f"|format(r.avg_score_all) if r.avg_score_all is not none else "–" }}</td>
-          <td>{{ "%.2f"|format(r.match_share) if r.match_share is not none else "–" }}</td>
-          <td><a class="btn btn-small" href="/search/calc/{{ r.school_id }}?year={{ year }}{% if program_id %}&program_id={{ program_id }}{% endif %}">Карточка</a></td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-    <p class="muted">Доля соответствия – демонстрационная оценка на основе наличия статистики по предметам профиля.</p>
+<div class="card results-card">
+  <div class="results-head">
+    <h2>Результаты</h2>
+    <p class="muted results-count">Найдено записей: {{ total }}</p>
   </div>
-{% endif %}
+
+  {% if results %}
+    <div class="table-wrap">
+      <table class="table table-clickable search-results-table">
+        <thead>
+          <tr>
+            <th>Регион</th>
+            <th>Муниципалитет</th>
+            <th>Школа</th>
+            <th>Профили</th>
+            <th>Годы ЕГЭ</th>
+            <th>Последний год</th>
+            <th>Среднее выпускников</th>
+            <th>Средний балл</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for r in results %}
+          <tr data-href="/search/school/{{ r.school_id }}{% if current_query %}?{{ current_query }}{% endif %}">
+            <td>{{ r.region_name }}</td>
+            <td>{{ r.municipality_name }}</td>
+            <td>{{ r.full_name }}</td>
+            <td>{{ r.profile_names if r.profile_names else "—" }}</td>
+            <td>{{ r.ege_years if r.ege_years is not none else "—" }}</td>
+            <td>{{ r.last_year if r.last_year is not none else "—" }}</td>
+            <td>{{ r.avg_graduates if r.avg_graduates is not none else "—" }}</td>
+            <td>{{ r.avg_score if r.avg_score is not none else "—" }}</td>
+            <td>
+              <a
+                class="btn btn-small"
+                href="/search/school/{{ r.school_id }}{% if current_query %}?{{ current_query }}{% endif %}"
+                onclick="event.stopPropagation();"
+              >Карточка</a>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if total_pages > 1 %}
+      <div class="pagination">
+        {% if page > 1 %}
+          <a class="btn btn-ghost btn-small" href="/search{% if query_without_page %}?{{ query_without_page }}&page={{ page - 1 }}{% else %}?page={{ page - 1 }}{% endif %}">Назад</a>
+        {% endif %}
+        <span class="muted">Страница {{ page }} из {{ total_pages }}</span>
+        {% if page < total_pages %}
+          <a class="btn btn-ghost btn-small" href="/search{% if query_without_page %}?{{ query_without_page }}&page={{ page + 1 }}{% else %}?page={{ page + 1 }}{% endif %}">Далее</a>
+        {% endif %}
+      </div>
+    {% endif %}
+  {% else %}
+    <div class="alert">По заданным фильтрам школы не найдены.</div>
+  {% endif %}
+</div>
+
+<script>
+  const regionSelect = document.getElementById("region_id");
+  const municipalitySelect = document.getElementById("municipality_id");
+
+  if (regionSelect && municipalitySelect) {
+    regionSelect.addEventListener("change", async () => {
+      const regionId = regionSelect.value;
+      municipalitySelect.innerHTML = '<option value="">Все</option>';
+      if (!regionId) {
+        return;
+      }
+
+      try {
+        const resp = await fetch(`/search/municipalities?region_id=${encodeURIComponent(regionId)}`);
+        if (!resp.ok) {
+          return;
+        }
+        const data = await resp.json();
+        (data.items || []).forEach((item) => {
+          const opt = document.createElement("option");
+          opt.value = item.municipality_id;
+          opt.textContent = item.name;
+          municipalitySelect.appendChild(opt);
+        });
+      } catch (e) {
+        console.error(e);
+      }
+    });
+  }
+
+  function initMultiDropdown(root) {
+    const toggle = root.querySelector("[data-role='toggle']");
+    const menu = root.querySelector("[data-role='menu']");
+    const labelNode = root.querySelector("[data-role='label']");
+    const checkboxes = Array.from(root.querySelectorAll("input[type='checkbox']"));
+
+    if (!toggle || !menu || !labelNode || checkboxes.length === 0) {
+      return;
+    }
+
+    const close = () => {
+      root.classList.remove("open");
+      toggle.setAttribute("aria-expanded", "false");
+    };
+
+    const open = () => {
+      root.classList.add("open");
+      toggle.setAttribute("aria-expanded", "true");
+    };
+
+    const updateLabel = () => {
+      const selected = checkboxes.filter((cb) => cb.checked).map((cb) => cb.dataset.title || cb.value);
+      if (selected.length === 0) {
+        labelNode.textContent = "Не выбрано";
+      } else if (selected.length <= 2) {
+        labelNode.textContent = selected.join(", ");
+      } else {
+        labelNode.textContent = `Выбрано: ${selected.length}`;
+      }
+      root.classList.toggle("has-value", selected.length > 0);
+    };
+
+    toggle.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (root.classList.contains("open")) {
+        close();
+      } else {
+        open();
+      }
+    });
+
+    checkboxes.forEach((cb) => cb.addEventListener("change", updateLabel));
+
+    document.addEventListener("click", (e) => {
+      if (!root.contains(e.target)) {
+        close();
+      }
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        close();
+      }
+    });
+
+    updateLabel();
+  }
+
+  document.querySelectorAll(".multi-dropdown").forEach((node) => initMultiDropdown(node));
+
+  document.querySelectorAll("tr[data-href]").forEach((row) => {
+    row.addEventListener("click", () => {
+      const href = row.getAttribute("data-href");
+      if (href) {
+        window.location.href = href;
+      }
+    });
+  });
+</script>
 {% endblock %}
