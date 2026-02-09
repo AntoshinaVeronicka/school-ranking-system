@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List, Tuple
 
 import psycopg2
+from psycopg2 import sql
 
 from load_common import get_db_config
 
@@ -28,7 +29,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Удаление региона и связанных муниципалитетов/школ")
     p.add_argument(
         "--region",
-        default="Камчатский край",
+        default="Забайкальский край",
         help="Точное имя региона в таблице edu.region",
     )
     p.add_argument(
@@ -36,6 +37,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Применить удаление (без этого выполняется dry-run и откат)",
     )
+    p.add_argument(
+        "--no-reset-identities",
+        dest="reset_identities",
+        action="store_false",
+        help="Не пересчитывать sequence/identity после удаления",
+    )
+    p.set_defaults(reset_identities=True)
     return p.parse_args()
 
 
@@ -54,6 +62,63 @@ def table_exists(cur, table_name: str, schema: str = "edu") -> bool:
     cur.execute("SELECT to_regclass(%s) IS NOT NULL", (f"{schema}.{table_name}",))
     row = cur.fetchone()
     return bool(row and row[0])
+
+
+def identity_columns(cur, schema: str, table_name: str) -> List[Tuple[str, str]]:
+    cur.execute(
+        """
+        SELECT
+            a.attname AS column_name,
+            pg_get_serial_sequence(
+                quote_ident(n.nspname) || '.' || quote_ident(c.relname),
+                a.attname
+            ) AS seq_name
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_attribute a ON a.attrelid = c.oid
+        WHERE n.nspname = %s
+          AND c.relname = %s
+          AND a.attnum > 0
+          AND NOT a.attisdropped
+          AND (
+                a.attidentity IN ('a', 'd')
+             OR pg_get_serial_sequence(
+                    quote_ident(n.nspname) || '.' || quote_ident(c.relname),
+                    a.attname
+                ) IS NOT NULL
+          )
+        ORDER BY a.attnum
+        """,
+        (schema, table_name),
+    )
+    rows = cur.fetchall()
+    out: List[Tuple[str, str]] = []
+    for col_name, seq_name in rows:
+        if seq_name:
+            out.append((str(col_name), str(seq_name)))
+    return out
+
+
+def reset_table_identities(cur, schema: str, table_name: str) -> List[str]:
+    reset_info: List[str] = []
+    for col_name, seq_name in identity_columns(cur, schema, table_name):
+        cur.execute(
+            sql.SQL("SELECT MAX({col}) FROM {schema}.{table}").format(
+                col=sql.Identifier(col_name),
+                schema=sql.Identifier(schema),
+                table=sql.Identifier(table_name),
+            )
+        )
+        max_id = cur.fetchone()[0]
+
+        if max_id is None:
+            cur.execute("SELECT setval(%s, 1, false)", (seq_name,))
+            reset_info.append(f"{seq_name} -> next=1")
+        else:
+            max_int = int(max_id)
+            cur.execute("SELECT setval(%s, %s, true)", (seq_name, max_int))
+            reset_info.append(f"{seq_name} -> next={max_int + 1}")
+    return reset_info
 
 
 def main() -> int:
@@ -114,6 +179,7 @@ def main() -> int:
                     "prof_event",
                     "analytics_request",
                     "analytics_request_filter",
+                    "analytics_run_school",
                     "analytics_school_selection",
                     "analytics_school_metric_value",
                     "analytics_school_rating",
@@ -182,6 +248,14 @@ def main() -> int:
                 "analytics_school_selection",
                 """
                     DELETE FROM edu.analytics_school_selection
+                    WHERE school_id IN (SELECT school_id FROM tmp_target_school)
+                """,
+            )
+            delete_if_exists(
+                "analytics_run_school",
+                "analytics_run_school",
+                """
+                    DELETE FROM edu.analytics_run_school
                     WHERE school_id IN (SELECT school_id FROM tmp_target_school)
                 """,
             )
@@ -357,8 +431,21 @@ def main() -> int:
                 print(f"- {table_name}: {count}")
 
             if args.apply:
+                reset_lines: List[str] = []
+                if args.reset_identities:
+                    for table_name, exists in existing_tables.items():
+                        if not exists:
+                            continue
+                        reset_lines.extend(reset_table_identities(cur, "edu", table_name))
                 conn.commit()
                 print("Изменения применены.")
+                if args.reset_identities:
+                    if reset_lines:
+                        print("Сброшены sequence/identity:")
+                        for line in reset_lines:
+                            print(f"- {line}")
+                    else:
+                        print("Сброс sequence/identity: подходящие колонки не найдены.")
             else:
                 conn.rollback()
                 print("Dry-run завершён: изменения откатаны. Для применения добавьте --apply.")

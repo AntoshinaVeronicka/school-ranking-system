@@ -248,7 +248,15 @@ def search_schools(
                 LEFT JOIN (
                     SELECT
                         y.school_id,
-                        ROUND(AVG(ss.avg_score)::numeric, 2) AS avg_score
+                        ROUND(
+                            (
+                                AVG(ss.avg_score) FILTER (
+                                    WHERE ss.avg_score IS NOT NULL
+                                      AND COALESCE(ss.participants_cnt, ss.chosen_cnt, 0) > 0
+                                )
+                            )::numeric,
+                            2
+                        ) AS avg_score
                     FROM edu.ege_school_year y
                     LEFT JOIN edu.ege_school_subject_stat ss ON ss.ege_school_year_id = y.ege_school_year_id
                     GROUP BY y.school_id
@@ -391,16 +399,34 @@ def fetch_school_card(school_id: int) -> dict[str, Any] | None:
         if row["subject_id"] is None:
             continue
 
+        participants_cnt = row["participants_cnt"]
+        not_passed_cnt = row["not_passed_cnt"]
+        high_80_99_cnt = row["high_80_99_cnt"]
+        score_100_cnt = row["score_100_cnt"]
+        chosen_cnt = row["chosen_cnt"]
+        avg_score = row["avg_score"]
+
+        has_subject_data = any(
+            (isinstance(v, int) and v > 0)
+            for v in (participants_cnt, not_passed_cnt, high_80_99_cnt, score_100_cnt, chosen_cnt)
+        )
+        if not has_subject_data and avg_score is not None:
+            try:
+                if float(avg_score) == 0.0:
+                    avg_score = None
+            except (TypeError, ValueError):
+                pass
+
         bucket["subjects"].append(
             {
                 "subject_id": int(row["subject_id"]),
                 "subject_name": str(row["subject_name"]),
-                "participants_cnt": row["participants_cnt"],
-                "not_passed_cnt": row["not_passed_cnt"],
-                "high_80_99_cnt": row["high_80_99_cnt"],
-                "score_100_cnt": row["score_100_cnt"],
-                "avg_score": row["avg_score"],
-                "chosen_cnt": row["chosen_cnt"],
+                "participants_cnt": participants_cnt,
+                "not_passed_cnt": not_passed_cnt,
+                "high_80_99_cnt": high_80_99_cnt,
+                "score_100_cnt": score_100_cnt,
+                "avg_score": avg_score,
+                "chosen_cnt": chosen_cnt,
             }
         )
 

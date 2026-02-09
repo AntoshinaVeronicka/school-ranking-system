@@ -403,7 +403,9 @@ def calculate_school_rating(
                 ep.kind,
                 ep.graduates_total,
                 ss.subject_id,
-                ss.avg_score
+                ss.avg_score,
+                ss.participants_cnt,
+                ss.chosen_cnt
             FROM ege_periods ep
             LEFT JOIN edu.ege_school_subject_stat ss ON ss.ege_school_year_id = ep.ege_school_year_id
         ),
@@ -411,6 +413,7 @@ def calculate_school_rating(
             SELECT esr.school_id, esr.subject_id
             FROM ege_subject_rows esr
             WHERE esr.subject_id IS NOT NULL
+              AND COALESCE(esr.participants_cnt, esr.chosen_cnt, 0) > 0
             GROUP BY esr.school_id, esr.subject_id
         ),
         school_subject_avg AS (
@@ -421,6 +424,7 @@ def calculate_school_rating(
             FROM ege_subject_rows esr
             WHERE esr.subject_id IS NOT NULL
               AND esr.avg_score IS NOT NULL
+              AND COALESCE(esr.participants_cnt, esr.chosen_cnt, 0) > 0
             GROUP BY esr.school_id, esr.subject_id
         ),
         eligible_schools AS (
@@ -548,6 +552,7 @@ def calculate_school_rating(
                 ROUND(AVG(esr.avg_score)::numeric, 2) AS avg_score_all
             FROM ege_subject_rows esr
             WHERE esr.avg_score IS NOT NULL
+              AND COALESCE(esr.participants_cnt, esr.chosen_cnt, 0) > 0
             GROUP BY esr.school_id
         )
         SELECT

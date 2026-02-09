@@ -237,100 +237,209 @@ def clean_common_rows(out: pd.DataFrame) -> pd.DataFrame:
 
 def read_plan_excel(path: Path, sheet: str) -> pd.DataFrame:
     header_row = find_header_row(path, sheet)
-    df = pd.read_excel(path, sheet_name=sheet, engine="openpyxl", header=header_row)
-    df = df.dropna(how="all").dropna(axis=1, how="all")
+    header_variants: List[Any] = [
+        [header_row, header_row + 1],
+        header_row,
+    ]
 
-    mun_col, school_col, _, grads_col = resolve_fixed_cols_flat(df)
+    def _raw_levels(col: Any) -> List[str]:
+        if isinstance(col, tuple):
+            levels = list(col)
+        else:
+            levels = [col]
+        return [norm_spaces(str(v).replace("\n", " ")).casefold() for v in levels]
 
-    # часто в таких таблицах муниципалитет и школа "сверху вниз" – протягиваем
-    df[mun_col] = df[mun_col].ffill()
-    df[school_col] = df[school_col].ffill()
+    def _subject_from_levels(levels: Sequence[str]) -> Optional[str]:
+        for lvl in levels:
+            subj = normalize_subject_title(lvl)
+            if subj in SUBJECT_CANON:
+                return subj
+        return None
 
-    out = pd.DataFrame(
-        {
-            "municipality": df[mun_col],
-            "school": df[school_col],
-            "graduates_total": df[grads_col],
-        }
-    )
+    def _find_cols(df_local: pd.DataFrame, words: Sequence[str]) -> List[Any]:
+        cols: List[Any] = []
+        for c in df_local.columns:
+            joined = " | ".join(_raw_levels(c))
+            if all(w in joined for w in words):
+                cols.append(c)
+        return cols
 
-    for c in df.columns:
-        if c in (mun_col, school_col, grads_col):
-            continue
-        subj = normalize_subject_title(c)
-        if subj in SUBJECT_CANON:
-            out[f"chosen__{subj}"] = df[c]
+    def _pick_first(df_local: pd.DataFrame, words: Sequence[str]) -> Optional[Any]:
+        cols = _find_cols(df_local, words)
+        return cols[0] if cols else None
 
-    return clean_common_rows(out)
+    def _pick_grads_col(df_local: pd.DataFrame) -> Optional[Any]:
+        candidates = _find_cols(df_local, ["всего", "выпуск"])
+        if not candidates:
+            return None
+        for c in candidates:
+            if _subject_from_levels(_raw_levels(c)) is None:
+                return c
+        return candidates[0]
+
+    def _parse_plan_frame(df_local: pd.DataFrame) -> pd.DataFrame:
+        mun_col = _pick_first(df_local, ["муницип"])
+        school_col = _pick_first(df_local, ["образоват"]) or _pick_first(df_local, ["школ"])
+        grads_col = _pick_grads_col(df_local)
+        if not mun_col or not school_col or not grads_col:
+            raise ValueError("Не найдены обязательные столбцы (муниципалитет/школа/выпускники).")
+
+        out = pd.DataFrame(
+            {
+                "municipality": df_local[mun_col],
+                "school": df_local[school_col],
+                "graduates_total": df_local[grads_col],
+            }
+        )
+
+        # часто в таких таблицах муниципалитет и школа "сверху вниз" – протягиваем
+        out["municipality"] = out["municipality"].ffill()
+        out["school"] = out["school"].ffill()
+
+        for c in df_local.columns:
+            if c in (mun_col, school_col, grads_col):
+                continue
+            subj = _subject_from_levels(_raw_levels(c))
+            if subj:
+                out[f"chosen__{subj}"] = df_local[c]
+
+        return out
+
+    last_error: Optional[Exception] = None
+    best_df: Optional[pd.DataFrame] = None
+    best_subject_cols = -1
+
+    for header_spec in header_variants:
+        try:
+            df = pd.read_excel(path, sheet_name=sheet, engine="openpyxl", header=header_spec)
+            df = df.dropna(how="all").dropna(axis=1, how="all")
+            parsed = _parse_plan_frame(df)
+            subj_cols = sum(1 for c in parsed.columns if str(c).startswith("chosen__"))
+            if subj_cols > best_subject_cols:
+                best_subject_cols = subj_cols
+                best_df = parsed
+            if subj_cols > 0:
+                return clean_common_rows(parsed)
+        except Exception as exc:
+            last_error = exc
+
+    if best_df is not None:
+        return clean_common_rows(best_df)
+
+    if last_error is not None:
+        raise last_error
+
+    raise ValueError("Не удалось распознать формат предварительных данных ЕГЭ.")
 
 
 def read_actual_excel(path: Path, sheet: str) -> pd.DataFrame:
     header_row = find_header_row(path, sheet)
-    df = pd.read_excel(
-        path,
-        sheet_name=sheet,
-        engine="openpyxl",
-        header=[header_row, header_row + 1, header_row + 2],
-    )
-    df = df.dropna(how="all").dropna(axis=1, how="all")
+    header_variants: List[List[int]] = [
+        [header_row, header_row + 1, header_row + 2],
+        [header_row, header_row + 1],
+    ]
 
-    def pick_fixed(prefix: str) -> Optional[Tuple[Any, Any, Any]]:
-        for c in df.columns:
-            if str(c[0]).casefold().startswith(prefix):
+    def _raw_levels(col: Any) -> List[str]:
+        if isinstance(col, tuple):
+            levels = list(col)
+        else:
+            levels = [col]
+        return [norm_spaces(str(v).replace("\n", " ")).casefold() for v in levels]
+
+    def _pick_fixed(df_local: pd.DataFrame, words: Sequence[str]) -> Optional[Any]:
+        for c in df_local.columns:
+            joined = " | ".join(_raw_levels(c))
+            if all(w in joined for w in words):
                 return c
         return None
 
-    mun_t = pick_fixed("муницип")
-    school_t = pick_fixed("образоват")
-    grads_t = None
-    for c in df.columns:
-        c0 = str(c[0]).casefold()
-        if "всего" in c0 and "выпуск" in c0:
-            grads_t = c
-            break
+    def _detect_metric(levels: Sequence[str]) -> Optional[str]:
+        joined = " | ".join(levels)
+        if "\u043f\u0440\u0438\u043d\u044f\u043b" in joined and "\u0443\u0447\u0430\u0441\u0442" in joined:
+            return "participants_cnt"
+        if "\u043d\u0435 \u043f\u0440\u0435\u043e\u0434\u043e\u043b" in joined or "min" in joined or "\u043f\u043e\u0440\u043e\u0433" in joined:
+            return "not_passed_cnt"
+        if "\u0432\u044b\u0441\u043e\u043a" in joined or "80-99" in joined:
+            return "high_80_99_cnt"
+        if "\u0441\u0440\u0435\u0434\u043d" in joined and "\u0431\u0430\u043b\u043b" in joined:
+            return "avg_score"
+        if "100" in joined:
+            return "score_100_cnt"
+        return None
 
-    if not mun_t or not school_t or not grads_t:
-        raise ValueError("Не найдены фиксированные колонки (муниципалитет/школа/выпускники).")
+    def _parse_actual_frame(df_local: pd.DataFrame) -> pd.DataFrame:
+        mun_t = _pick_fixed(df_local, ["\u043c\u0443\u043d\u0438\u0446\u0438\u043f"])
+        school_t = _pick_fixed(df_local, ["\u043e\u0431\u0440\u0430\u0437\u043e\u0432\u0430\u0442"]) or _pick_fixed(df_local, ["\u0448\u043a\u043e\u043b"])
+        grads_t = _pick_fixed(df_local, ["\u0432\u0441\u0435\u0433\u043e", "\u0432\u044b\u043f\u0443\u0441\u043a", "\u0435\u0433\u044d"]) or _pick_fixed(
+            df_local, ["\u0432\u0441\u0435\u0433\u043e", "\u0432\u044b\u043f\u0443\u0441\u043a"]
+        )
 
-    out = pd.DataFrame(
-        {
-            "municipality": df[mun_t],
-            "school": df[school_t],
-            "graduates_total": df[grads_t],
-        }
-    )
+        if not mun_t or not school_t or not grads_t:
+            raise ValueError("Не найдены фиксированные колонки (муниципалитет/школа/выпускники).")
 
-    # В фактических таблицах муниципалитет часто объединён и заполнен только в первой строке блока.
-    out["municipality"] = out["municipality"].ffill()
+        out = pd.DataFrame(
+            {
+                "municipality": df_local[mun_t],
+                "school": df_local[school_t],
+                "graduates_total": df_local[grads_t],
+            }
+        )
+        out["municipality"] = out["municipality"].ffill()
 
-    for col in df.columns:
-        if str(col[0]).strip().casefold() != "из них":
-            continue
+        for col in df_local.columns:
+            if col in (mun_t, school_t, grads_t):
+                continue
 
-        subj = normalize_subject_title(col[1])
-        if subj not in SUBJECT_CANON:
-            continue
+            levels = _raw_levels(col)
+            subj: Optional[str] = None
+            for lvl in levels:
+                candidate = normalize_subject_title(lvl)
+                if candidate in SUBJECT_CANON:
+                    subj = candidate
+                    break
+            if subj is None:
+                continue
 
-        metric_raw = norm_spaces(str(col[2]).replace("\n", " ")).casefold()
+            metric = _detect_metric(levels)
+            if metric is None:
+                # Упрощенный формат: есть только колонка предмета без разбивки по метрикам.
+                # Интерпретируем как число участников по предмету.
+                metric = "participants_cnt"
 
-        if "принял" in metric_raw and "участ" in metric_raw:
-            metric = "participants_cnt"
-        elif "не преодол" in metric_raw or "min" in metric_raw or "порог" in metric_raw:
-            metric = "not_passed_cnt"
-        elif "высок" in metric_raw or "80-99" in metric_raw:
-            metric = "high_80_99_cnt"
-        elif "100" in metric_raw:
-            metric = "score_100_cnt"
-        elif "средн" in metric_raw and "балл" in metric_raw:
-            metric = "avg_score"
-        else:
-            continue
+            out[f"{metric}__{subj}"] = df_local[col]
 
-        out[f"{metric}__{subj}"] = df[col]
+        return out
 
-    return clean_common_rows(out)
+    last_error: Optional[Exception] = None
+    best_df: Optional[pd.DataFrame] = None
+    best_subject_cols = -1
 
+    for header_spec in header_variants:
+        try:
+            df = pd.read_excel(
+                path,
+                sheet_name=sheet,
+                engine="openpyxl",
+                header=header_spec,
+            )
+            df = df.dropna(how="all").dropna(axis=1, how="all")
+            parsed = _parse_actual_frame(df)
+            subj_cols = sum(1 for c in parsed.columns if "__" in str(c))
+            if subj_cols > best_subject_cols:
+                best_subject_cols = subj_cols
+                best_df = parsed
+            if subj_cols > 0:
+                return clean_common_rows(parsed)
+        except Exception as exc:
+            last_error = exc
 
+    if best_df is not None:
+        return clean_common_rows(best_df)
+
+    if last_error is not None:
+        raise last_error
+
+    raise ValueError("Не удалось распознать формат фактического листа ЕГЭ.")
 def fetch_allowed_kinds(cur) -> List[str]:
     cur.execute("SELECT unnest(enum_range(NULL::edu.ege_dataset_kind))::text")
     return [r[0] for r in cur.fetchall()]
@@ -550,6 +659,83 @@ def merge_subject_acc(dst: Dict[str, Any], src: Dict[str, Any]) -> None:
     dst["_avg_w"] = (dst.get("_avg_w") or 0) + w
 
 
+def sanitize_subject_metrics(
+    metrics: Dict[str, Any],
+    *,
+    school_id: int,
+    subject: str,
+    correction_stats: Optional[Dict[str, int]] = None,
+    log_limit: int = 30,
+) -> None:
+    """
+    Приводим метрики к ограничениям БД:
+    - если participants_cnt отсутствует, восстанавливаем по максимуму счетчиков;
+    - счетчики не могут превышать participants_cnt.
+    """
+    participants = metrics.get("participants_cnt")
+    not_passed = metrics.get("not_passed_cnt")
+    high = metrics.get("high_80_99_cnt")
+    score_100 = metrics.get("score_100_cnt")
+    chosen = metrics.get("chosen_cnt")
+    avg_score = metrics.get("avg_score")
+
+    if participants is None:
+        derived = max((v for v in (not_passed, high, score_100) if isinstance(v, int)), default=None)
+        if derived is not None:
+            metrics["participants_cnt"] = derived
+            participants = derived
+            if correction_stats is not None:
+                correction_stats["restored"] = correction_stats.get("restored", 0) + 1
+                if correction_stats.get("logged", 0) < log_limit:
+                    logging.warning(
+                        "Восстановлен participants_cnt: school_id=%s subject='%s' value=%s",
+                        school_id,
+                        subject,
+                        derived,
+                    )
+                    correction_stats["logged"] = correction_stats.get("logged", 0) + 1
+
+    if participants is None:
+        has_positive_data = any(isinstance(v, int) and v > 0 for v in (not_passed, high, score_100, chosen))
+        if avg_score is not None and not has_positive_data:
+            try:
+                if float(avg_score) == 0.0:
+                    metrics["avg_score"] = None
+                    if correction_stats is not None:
+                        correction_stats["avg_nullified"] = correction_stats.get("avg_nullified", 0) + 1
+            except (TypeError, ValueError):
+                pass
+        return
+
+    has_positive_data = any(isinstance(v, int) and v > 0 for v in (participants, not_passed, high, score_100, chosen))
+    if avg_score is not None and not has_positive_data:
+        try:
+            if float(avg_score) == 0.0:
+                metrics["avg_score"] = None
+                if correction_stats is not None:
+                    correction_stats["avg_nullified"] = correction_stats.get("avg_nullified", 0) + 1
+        except (TypeError, ValueError):
+            pass
+
+    for key in ("not_passed_cnt", "high_80_99_cnt", "score_100_cnt", "chosen_cnt"):
+        value = metrics.get(key)
+        if isinstance(value, int) and value > participants:
+            if correction_stats is not None:
+                correction_stats["clamped"] = correction_stats.get("clamped", 0) + 1
+                if correction_stats.get("logged", 0) < log_limit:
+                    logging.warning(
+                        "Скорректировано %s: school_id=%s subject='%s' %s -> %s (participants_cnt=%s)",
+                        key,
+                        school_id,
+                        subject,
+                        value,
+                        participants,
+                        participants,
+                    )
+                    correction_stats["logged"] = correction_stats.get("logged", 0) + 1
+            metrics[key] = participants
+
+
 # -------------------- main load --------------------
 
 def load_ege_to_db(
@@ -582,6 +768,20 @@ def load_ege_to_db(
                 df = read_actual_excel(path, sheet)
 
             logging.info("Прочитано строк (после чистки): %s", len(df))
+            if kind_db == "plan":
+                subject_metric_cols = [c for c in df.columns if str(c).startswith("chosen__")]
+                if not subject_metric_cols:
+                    raise ValueError(
+                        "Для предварительных данных на выбранном листе не найдены предметные колонки. "
+                        "Проверьте тип данных/лист файла."
+                    )
+            if kind_db == "actual":
+                subject_metric_cols = [c for c in df.columns if "__" in str(c)]
+                if not subject_metric_cols:
+                    raise ValueError(
+                        "Для фактических данных на выбранном листе не найдены предметные колонки. "
+                        "Проверьте тип данных/лист файла."
+                    )
 
             # справочники
             subject_name_to_id = fetch_subject_map(cur)
@@ -715,12 +915,19 @@ def load_ege_to_db(
             stats_rows: List[
                 Tuple[int, int, Optional[int], Optional[int], Optional[int], Optional[int], Optional[Decimal], Optional[int]]
             ] = []
+            correction_stats: Dict[str, int] = {"restored": 0, "clamped": 0, "logged": 0}
             for sid, subj_map in per_school_subjects.items():
                 yid = school_id_to_year_id.get(sid)
                 if not yid:
                     continue
 
                 for subj, m in subj_map.items():
+                    sanitize_subject_metrics(
+                        m,
+                        school_id=sid,
+                        subject=subj,
+                        correction_stats=correction_stats,
+                    )
                     subject_id = subject_name_to_id.get(subj)
                     if subject_id is None:
                         logging.warning("Не найден subject_id для предмета: %s", subj)
@@ -741,6 +948,19 @@ def load_ege_to_db(
 
             if stats_rows:
                 upsert_ege_subject_stats(cur, stats_rows)
+
+            if correction_stats["restored"] or correction_stats["clamped"] or correction_stats.get("avg_nullified", 0):
+                suppressed = max(
+                    0,
+                    correction_stats["restored"] + correction_stats["clamped"] - correction_stats["logged"],
+                )
+                logging.warning(
+                    "Автокоррекция метрик ЕГЭ: restored_participants=%s, clamped_counts=%s, avg_nullified=%s, suppressed_logs=%s",
+                    correction_stats["restored"],
+                    correction_stats["clamped"],
+                    correction_stats.get("avg_nullified", 0),
+                    suppressed,
+                )
 
             logging.info(
                 "Готово: ege_school_year=%s, ege_school_subject_stat=%s",
@@ -789,8 +1009,6 @@ def main() -> None:
         region_name=region_name,
         dry_run=args.dry_run,
     )
-
-
 if __name__ == "__main__":
     try:
         main()
