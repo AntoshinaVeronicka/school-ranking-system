@@ -1,85 +1,57 @@
-# school-ranking-system
+﻿# school-ranking-system
 
-## Что это
+Веб-приложение для загрузки, поиска и рейтинга школ на данных ЕГЭ и связанных справочниках.
 
-`school-ranking-system` — учебный веб-проект для работы с данными школ:
+## Что есть в проекте
+- Загрузка данных из Excel (ЕГЭ, справочники, прием, профориентация).
+- Поиск школ с фильтрами, карточкой школы и экспортом в Excel.
+- Подбор и расчет рейтинга школ с весами, фильтрами и экспортом.
+- Сохранение результатов в аналитику только по кнопкам:
+  - `/search/save`
+  - `/rating/profile/save`
+- Раздел отчетности: генерация, архив, экспорт.
 
-- импорт данных из Excel (ЕГЭ, справочники, прием, профориентация);
-- поиск школ с фильтрами, карточкой школы и экспортом;
-- расчет рейтинга школ с фильтрацией и экспортом;
-- раздел отчетности: формирование отчетов, архив выгрузок, история расчетов.
-
-Технологический стек:
-
-- FastAPI + Jinja2 (веб-интерфейс);
-- PostgreSQL (предметные данные и аналитика);
-- SQLite (`dvfu_prof_webapp/app.db`) только для веб-части (пользователи, сессии, журнал загрузок).
-
-## Что реализовано сейчас
-
-- Авторизация (`/login`) и главное меню.
-- Раздел **Данные и загрузки**:
-  - импорт ЕГЭ с выбором файла/листа/года/типа (`plan`/`actual`);
-  - импорт справочников (регион/муниципалитет/школа/профиль, программы/требования, минимальные баллы ЕГЭ);
-  - формы для импорта приема и профориентации.
-- Раздел **Поиск школ**:
-  - регистронезависимый поиск по вхождению в названии;
-  - фильтры (регион, муниципалитет, профили, год, plan/fact, предметы);
-  - пагинация, экспорт результатов в Excel;
-  - карточка школы + экспорт карточки в Excel.
-- Раздел **Подбор и рейтинг**:
-  - фильтры, аналогичные поиску;
-  - мультивыбор институтов/направлений/предметов;
-  - расчет итогового рейтинга с весами;
-  - фильтр по порогам ЕГЭ и соответствию программам;
-  - экспорт рейтинга в Excel.
-- Раздел **Отчетность**:
-  - генерация отчетов по выбранному run;
-  - типы отчета: `standard`, `detailed`;
-  - архив отчетов и история расчетов;
-  - экспорт run/report.
-
-## Структура проекта
-
+## Минимальная структура
 ```text
 school-ranking-system/
-├─ dvfu_prof_webapp/                 # FastAPI приложение
-│  ├─ main.py                        # Точка входа ASGI
-│  ├─ routes.py                      # HTTP-роуты
-│  ├─ services.py                    # Сервисные функции (импорт/рендер/auth)
-│  ├─ search_repo.py                 # SQL логика поиска
-│  ├─ rating_repo.py                 # SQL логика рейтинга
-│  ├─ analytics_repo.py              # Сохранение/чтение расчетов и отчетов
-│  ├─ db.py                          # SQLite модели для веб-части
-│  ├─ config.py                      # Конфигурация приложения
-│  ├─ templates/                     # HTML шаблоны
-│  ├─ static/                        # CSS/статические ресурсы
-│  └─ requirements.txt               # Python-зависимости веб-приложения
-├─ load/                             # Скрипты загрузки и утилиты БД
-│  ├─ load_ege_to_db.py
-│  ├─ load_schools_to_db.py
-│  ├─ load_programs_requirements.py
-│  ├─ delete_region_cascade.py
-│  └─ setup_search_school_optimization.py
-├─ db/
-│  ├─ schema.sql                     # Актуальная схема PostgreSQL
-│  └─ sql/                           # Отдельные SQL-миграции/оптимизации
-├─ mermaid/                          # Диаграммы переходов и сценариев
-├─ docker-compose.yml                # PostgreSQL в Docker
-├─ .env                              # Локальные переменные окружения
-└─ README.md
+├── dvfu_prof_webapp/               # FastAPI-приложение
+│   ├── main.py                     # Точка входа ASGI
+│   ├── routes.py                   # HTTP-роуты
+│   ├── services.py                 # Общие сервисы/рендер/запуск скриптов
+│   ├── search_repo.py              # SQL-логика поиска школ
+│   ├── rating_repo.py              # SQL-логика рейтинга
+│   ├── analytics_repo.py           # Сохранение/чтение аналитики и отчетов
+│   ├── db.py                       # SQLite-модели (пользователи/служебные записи)
+│   ├── config.py                   # Конфигурация приложения
+│   ├── templates/                  # Jinja2-шаблоны
+│   └── static/                     # CSS и статические файлы
+├── load/                           # CLI-скрипты загрузки и обслуживания БД
+│   ├── load_ege_to_db.py
+│   ├── load_schools_to_db.py
+│   ├── load_programs_requirements.py
+│   ├── delete_region_cascade.py
+│   └── setup_search_school_optimization.py
+├── db/
+│   ├── schema.sql                  # Базовая схема PostgreSQL
+│   └── sql/                        # Дополнительные SQL-скрипты
+├── docker-compose.yml              # Подъем PostgreSQL
+└── README.md
 ```
 
-## Локальный запуск
+## Основные технологии
+- FastAPI + Jinja2
+- PostgreSQL (основные предметные данные)
+- SQLite (`dvfu_prof_webapp/app.db`) для пользователей и служебных записей веб-части
+- Pandas/OpenPyXL для импорта и экспорта Excel
 
-### 1. Требования
+## Быстрый старт
 
+### 1) Требования
 - Python 3.10+
-- Docker Desktop (или локальный PostgreSQL 14+)
-- PowerShell (ниже команды под Windows)
+- Docker (или локальный PostgreSQL)
+- Windows PowerShell (команды ниже под него)
 
-### 2. Установка зависимостей
-
+### 2) Установка зависимостей
 ```powershell
 cd C:\Users\Veronika\Desktop\school-ranking-system
 python -m venv .venv
@@ -88,119 +60,68 @@ python -m pip install --upgrade pip
 pip install -r dvfu_prof_webapp\requirements.txt
 ```
 
-### 3. Настройка `.env`
-
+### 3) Настройка `.env`
 Создайте/проверьте файл `.env` в корне проекта:
 
 ```env
+SECRET_KEY=replace-with-strong-secret
+DEFAULT_ADMIN_LOGIN=admin
+DEFAULT_ADMIN_PASSWORD=admin
+
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 POSTGRES_DB=school_ranking
 POSTGRES_USER=app
 POSTGRES_PASSWORD=app
-
-SECRET_KEY=replace-with-strong-secret
-DEFAULT_ADMIN_LOGIN=admin
-DEFAULT_ADMIN_PASSWORD=admin
 ```
 
-Обязательные переменные: `SECRET_KEY`, `DEFAULT_ADMIN_PASSWORD`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`.
+Важно:
+- `SECRET_KEY` и `DEFAULT_ADMIN_PASSWORD` обязательны для веб-приложения.
+- `POSTGRES_*` обязательны для поиска/рейтинга/отчетности и загрузчиков.
 
-### 4. Поднять PostgreSQL
-
+### 4) Поднять PostgreSQL
 ```powershell
 docker compose up -d
 ```
 
-Если база новая, схема загрузится автоматически из `db/schema.sql` при первом старте контейнера.
-
-### 5. Запуск веб-приложения
-
-Запускайте из корня проекта:
-
+### 5) Запустить веб-приложение
 ```powershell
 python -m uvicorn dvfu_prof_webapp.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Открыть в браузере:
+Открыть: `http://127.0.0.1:8000/login`
 
-- `http://127.0.0.1:8000/login`
+## Ключевые разделы и маршруты
+- Аутентификация: `/login`, `/logout`
+- Данные и загрузки: `/data/*`
+- Поиск школ: `/search`, `/search/export`, `/search/school/{school_id}`
+- Рейтинг: `/rating/profile`, `/rating/export`
+- Отчетность: `/reports`, `/reports/generate`, `/reports/archive`, `/reports/calc-history`
 
-### 6. Вход
-
-- Логин: `DEFAULT_ADMIN_LOGIN` (по умолчанию `admin`)
-- Пароль: `DEFAULT_ADMIN_PASSWORD` из `.env`
-
-## Импорт данных (CLI)
-
-### ЕГЭ
+## CLI-скрипты
+Примеры:
 
 ```powershell
+# ЕГЭ
 python load\load_ege_to_db.py --file "C:\path\region.xlsx" --sheet 2024 --kind actual --year 2024 --region "Приморский край"
-```
 
-Dry-run:
-
-```powershell
-python load\load_ege_to_db.py --file "C:\path\region.xlsx" --sheet 2024 --kind plan --year 2024 --dry-run
-```
-
-### Справочники (регион/муниципалитет/школа/профиль)
-
-```powershell
+# Справочники школ
 python load\load_schools_to_db.py "C:\path\region.xlsx" --sheet 2024
-```
 
-С выбором файла через диалог:
-
-```powershell
-python load\load_schools_to_db.py --pick
-```
-
-### Направления и требования по ВИ
-
-```powershell
+# Программы и требования
 python load\load_programs_requirements.py "C:\path\programs.xlsx" --sheet 0
-```
 
-### Оптимизация поиска (pg_trgm + индексы)
-
-```powershell
+# Индексы для оптимизации поиска
 python load\setup_search_school_optimization.py
 ```
 
-## Очистка данных региона
+## Полезные SQL-скрипты
+- `db/sql/search_school_optimization.sql`
+- `db/sql/municipality_case_insensitive_unique.sql`
+- `db/sql/clear_analytics_data.sql`
 
-Скрипт `load/delete_region_cascade.py` удаляет регион и все связанные данные (муниципалитеты, школы, ЕГЭ, аналитика и связанные сущности), с поддержкой dry-run.
-
-Dry-run:
-
-```powershell
-python load\delete_region_cascade.py --region "Забайкальский край"
-```
-
-Применить удаление + пересчитать identity/sequence:
-
-```powershell
-python load\delete_region_cascade.py --region "Забайкальский край" --apply
-```
-
-## Экспорты
-
-- Поиск школ: `/search/export` (текущая выдача).
-- Карточка школы: `/search/school/{school_id}/export`.
-- Рейтинг: `/rating/export`.
-- Run отчетности: `/reports/run/{run_id}/export`.
-- Отдельный отчет из архива: `/reports/report/{report_id}/export`.
-
-## Полезные замечания
-
-- В репозиторий не должны попадать runtime-файлы (`dvfu_prof_webapp/app.db`, `dvfu_prof_webapp/uploads/*`) — они уже в `.gitignore`.
-- Если в PowerShell видите «кракозябры», переключите кодировку:
-
-```powershell
-chcp 65001
-$env:PYTHONIOENCODING="utf-8"
-```
-
-- Если `uvicorn` не стартует на `8000` с `WinError 10013`, используйте другой порт, например `--port 8010`.
+## Примечания
+- Неавторизованный доступ к защищенным страницам обрабатывается централизованно:
+  - HTML-запросы -> редирект на `/login`
+  - API-запросы -> `401`
+- Runtime-файлы уже исключены из git через `.gitignore` (`.env`, `.venv`, `uploads`, `app.db`).

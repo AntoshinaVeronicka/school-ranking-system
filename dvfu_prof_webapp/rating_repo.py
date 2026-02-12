@@ -335,10 +335,10 @@ def calculate_school_rating(
     ege_where_sql = " AND ".join(ege_clauses) if ege_clauses else "TRUE"
 
     has_subject_filter = bool(filters.subject_ids)
+    selected_subjects = sorted(set(filters.subject_ids))
     subject_filter_sql = "TRUE"
     subject_filter_params: list[Any] = []
     if has_subject_filter:
-        selected_subjects = sorted(set(filters.subject_ids))
         subject_filter_sql = """
             EXISTS (
                 SELECT 1
@@ -348,8 +348,37 @@ def calculate_school_rating(
                 GROUP BY ssp.school_id
                 HAVING COUNT(DISTINCT ssp.subject_id) = %s
             )
+            AND (
+                %s = FALSE
+                OR EXISTS (
+                    SELECT 1
+                    FROM school_subject_avg ssa
+                    LEFT JOIN edu.ege_subject subj ON subj.subject_id = ssa.subject_id
+                    WHERE ssa.school_id = bs.school_id
+                      AND ssa.subject_id = ANY(%s)
+                    GROUP BY ssa.school_id
+                    HAVING COUNT(
+                        DISTINCT CASE
+                            WHEN ssa.avg_score >= COALESCE(subj.min_passing_score, 0)
+                             AND (%s IS NULL OR ssa.avg_score >= %s)
+                            THEN ssa.subject_id
+                            ELSE NULL
+                        END
+                    ) = %s
+                )
+            )
         """
-        subject_filter_params.extend([selected_subjects, len(selected_subjects)])
+        subject_filter_params.extend(
+            [
+                selected_subjects,
+                len(selected_subjects),
+                filters.enforce_subject_threshold,
+                selected_subjects,
+                filters.min_avg_score,
+                filters.min_avg_score,
+                len(selected_subjects),
+            ]
+        )
 
     has_program_scope = bool(filters.institute_ids) or bool(filters.program_ids)
     program_scope_clauses = ["sp.is_active IS TRUE"]
@@ -365,6 +394,28 @@ def calculate_school_rating(
     if not has_program_scope:
         program_scope_clauses.append("FALSE")
     program_scope_sql = " AND ".join(program_scope_clauses)
+    apply_all_subject_thresholds = (
+        filters.enforce_subject_threshold and not has_subject_filter and not has_program_scope
+    )
+    all_subject_threshold_sql = "TRUE"
+    all_subject_threshold_params: list[Any] = []
+    if apply_all_subject_thresholds:
+        all_subject_threshold_sql = """
+            EXISTS (
+                SELECT 1
+                FROM school_subject_avg ssa
+                LEFT JOIN edu.ege_subject subj ON subj.subject_id = ssa.subject_id
+                WHERE ssa.school_id = bs.school_id
+                GROUP BY ssa.school_id
+                HAVING COUNT(*) FILTER (
+                    WHERE ssa.avg_score < COALESCE(subj.min_passing_score, 0)
+                       OR (%s IS NOT NULL AND ssa.avg_score < %s)
+                ) = 0
+            )
+        """
+        all_subject_threshold_params.extend([filters.min_avg_score, filters.min_avg_score])
+    use_selected_subjects_for_admission_avg = bool(selected_subjects)
+    use_program_subjects_for_admission_avg = (not use_selected_subjects_for_admission_avg) and has_program_scope
 
     safe_limit = max(10, min(int(filters.limit), 2000))
     normalized_weights = normalize_rating_weights(weights)
@@ -431,6 +482,7 @@ def calculate_school_rating(
             SELECT bs.*
             FROM base_school bs
             WHERE (%s = FALSE OR {subject_filter_sql})
+              AND (%s = FALSE OR {all_subject_threshold_sql})
         ),
         selected_programs AS (
             SELECT
@@ -451,6 +503,24 @@ def calculate_school_rating(
             FROM selected_programs sp
             JOIN edu.program_ege_requirement per ON per.program_id = sp.program_id
             LEFT JOIN edu.ege_subject subj ON subj.subject_id = per.subject_id
+        ),
+        scoring_subjects AS (
+            SELECT DISTINCT pr.subject_id
+            FROM program_requirements pr
+            WHERE %s = TRUE
+              AND pr.subject_id IS NOT NULL
+            UNION
+            SELECT DISTINCT unnest(%s::int[])
+            WHERE %s = TRUE
+        ),
+        admission_subject_score AS (
+            SELECT
+                es.school_id,
+                ROUND(AVG(ssa.avg_score)::numeric, 2) AS admission_subject_avg
+            FROM eligible_schools es
+            JOIN school_subject_avg ssa ON ssa.school_id = es.school_id
+            JOIN scoring_subjects ss ON ss.subject_id = ssa.subject_id
+            GROUP BY es.school_id
         ),
         program_school_eval AS (
             SELECT
@@ -568,6 +638,7 @@ def calculate_school_rating(
             spa.last_year,
             spa.ege_years,
             ssa.avg_score_all,
+            ass.admission_subject_avg,
             COALESCE(ps.programs_total, 0) AS programs_total,
             COALESCE(ps.programs_matched, 0) AS programs_matched,
             COALESCE(ps.match_share, 0) AS match_share,
@@ -583,6 +654,7 @@ def calculate_school_rating(
         ) p ON TRUE
         LEFT JOIN school_period_agg spa ON spa.school_id = bs.school_id
         LEFT JOIN school_score_agg ssa ON ssa.school_id = bs.school_id
+        LEFT JOIN admission_subject_score ass ON ass.school_id = bs.school_id
         LEFT JOIN program_summary ps ON ps.school_id = bs.school_id
         LEFT JOIN matched_programs mp ON mp.school_id = bs.school_id
         WHERE spa.school_id IS NOT NULL
@@ -598,7 +670,16 @@ def calculate_school_rating(
     params.extend(ege_params)
     params.append(has_subject_filter)
     params.extend(subject_filter_params)
+    params.append(apply_all_subject_thresholds)
+    params.extend(all_subject_threshold_params)
     params.extend(program_scope_params)
+    params.extend(
+        [
+            use_program_subjects_for_admission_avg,
+            selected_subjects,
+            use_selected_subjects_for_admission_avg,
+        ]
+    )
 
     params.extend(
         [
@@ -652,6 +733,7 @@ def calculate_school_rating(
 
         row["avg_graduates"] = _to_optional_float(row.get("avg_graduates"))
         row["avg_score_all"] = _to_optional_float(row.get("avg_score_all"))
+        row["admission_subject_avg"] = _to_optional_float(row.get("admission_subject_avg"))
         row["match_share"] = round(match_share, 4)
         row["threshold_share"] = round(threshold_share, 4)
         row["norm_graduates"] = round(norm_graduates, 4)

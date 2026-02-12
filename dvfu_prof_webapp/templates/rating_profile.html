@@ -26,83 +26,6 @@
       </select>
     </label>
 
-    <label class="field">Регион
-      <select name="region_id" id="rating_region_id">
-        <option value="">Все</option>
-        {% for r in regions %}
-          <option value="{{ r.region_id }}" {% if filters.region_id == r.region_id %}selected{% endif %}>{{ r.name }}</option>
-        {% endfor %}
-      </select>
-    </label>
-
-    <label class="field">Муниципалитет
-      <select name="municipality_id" id="rating_municipality_id">
-        <option value="">Все</option>
-        {% for m in municipalities %}
-          <option value="{{ m.municipality_id }}" {% if filters.municipality_id == m.municipality_id %}selected{% endif %}>{{ m.name }}</option>
-        {% endfor %}
-      </select>
-    </label>
-
-    <label class="field">Строк в рейтинге
-      <select name="limit">
-        {% for n in [50, 100, 200, 300, 500, 1000] %}
-          <option value="{{ n }}" {% if filters.limit == n %}selected{% endif %}>{{ n }}</option>
-        {% endfor %}
-      </select>
-    </label>
-
-    <label class="field">Мин. среднее выпускников
-      <input type="number" name="min_graduates" min="0" value="{{ filters.min_graduates }}">
-    </label>
-
-    <label class="field">Мин. средний балл
-      <input type="number" name="min_avg_score" min="0" max="100" step="0.1" value="{{ filters.min_avg_score }}">
-    </label>
-
-    <label class="field">Вес: выпускники
-      <input type="number" name="w_graduates" min="0" step="0.01" value="{{ filters.w_graduates }}">
-    </label>
-
-    <label class="field">Вес: средний балл
-      <input type="number" name="w_avg_score" min="0" step="0.01" value="{{ filters.w_avg_score }}">
-    </label>
-
-    <label class="field">Вес: соответствие программам
-      <input type="number" name="w_match_share" min="0" step="0.01" value="{{ filters.w_match_share }}">
-    </label>
-
-    <label class="field">Вес: пороги ЕГЭ
-      <input type="number" name="w_threshold_share" min="0" step="0.01" value="{{ filters.w_threshold_share }}">
-    </label>
-
-    <div class="field field-wide">
-      <span class="picker-label">Институты</span>
-      <div class="multi-dropdown" data-role="dropdown">
-        <button type="button" class="multi-dropdown-toggle" data-role="toggle" aria-expanded="false">
-          <span class="multi-dropdown-value" data-role="label">Не выбрано</span>
-          <span class="multi-dropdown-arrow" aria-hidden="true">▾</span>
-        </button>
-        <div class="multi-dropdown-menu" data-role="menu">
-          <div class="multi-dropdown-options">
-            {% for i in institutes %}
-              <label class="multi-dropdown-option">
-                <input
-                  type="checkbox"
-                  name="institute_ids"
-                  value="{{ i.institute_id }}"
-                  data-title="{{ i.name }}"
-                  {% if i.institute_id in filters.institute_ids %}checked{% endif %}
-                >
-                <span class="multi-dropdown-option-text">{{ i.name }}</span>
-                <span class="multi-dropdown-check" aria-hidden="true">✓</span>
-              </label>
-            {% endfor %}
-          </div>
-        </div>
-      </div>
-    </div>
-
     <div class="field field-wide">
       <span class="picker-label">Профили школы</span>
       <div class="multi-dropdown" data-role="dropdown">
@@ -157,7 +80,34 @@
       </div>
     </div>
 
-    <div class="field field-wide" id="program_picker_container">
+    <div class="field field-wide rating-scope-field">
+      <span class="picker-label">Институты</span>
+      <div class="multi-dropdown" data-role="dropdown">
+        <button type="button" class="multi-dropdown-toggle" data-role="toggle" aria-expanded="false">
+          <span class="multi-dropdown-value" data-role="label">Не выбрано</span>
+          <span class="multi-dropdown-arrow" aria-hidden="true">▾</span>
+        </button>
+        <div class="multi-dropdown-menu" data-role="menu">
+          <div class="multi-dropdown-options">
+            {% for i in institutes %}
+              <label class="multi-dropdown-option">
+                <input
+                  type="checkbox"
+                  name="institute_ids"
+                  value="{{ i.institute_id }}"
+                  data-title="{{ i.name }}"
+                  {% if i.institute_id in filters.institute_ids %}checked{% endif %}
+                >
+                <span class="multi-dropdown-option-text">{{ i.name }}</span>
+                <span class="multi-dropdown-check" aria-hidden="true">✓</span>
+              </label>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="field field-wide rating-scope-field" id="program_picker_container">
       <span class="picker-label">Направления (программы)</span>
       <div class="multi-dropdown" data-role="dropdown">
         <button type="button" class="multi-dropdown-toggle" data-role="toggle" aria-expanded="false">
@@ -188,18 +138,122 @@
     </div>
   </div>
 
+  <div class="rating-key-row">
+    <label class="field">Регион
+      <select name="region_id" id="rating_region_id">
+        <option value="">Все</option>
+        {% for r in regions %}
+          <option value="{{ r.region_id }}" {% if filters.region_id == r.region_id %}selected{% endif %}>{{ r.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="field">Муниципалитет
+      <select name="municipality_id" id="rating_municipality_id">
+        <option value="">Все</option>
+        {% for m in municipalities %}
+          <option value="{{ m.municipality_id }}" {% if filters.municipality_id == m.municipality_id %}selected{% endif %}>{{ m.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="field">Строк в рейтинге
+      <select name="limit">
+        {% for n in [50, 100, 200, 300, 500, 1000] %}
+          <option value="{{ n }}" {% if filters.limit == n %}selected{% endif %}>{{ n }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="field">Мин. среднее выпускников
+      <input type="number" name="min_graduates" min="0" value="{{ filters.min_graduates }}">
+    </label>
+
+    <label class="field">Мин. средний балл
+      <input type="number" name="min_avg_score" min="0" max="100" step="0.1" value="{{ filters.min_avg_score }}">
+    </label>
+  </div>
+
+  <div class="weights-row">
+    <label class="field">Вес: выпускники
+      <input type="number" name="w_graduates" min="0" step="0.01" value="{{ filters.w_graduates }}">
+    </label>
+
+    <label class="field">Вес: средний балл
+      <input type="number" name="w_avg_score" min="0" step="0.01" value="{{ filters.w_avg_score }}">
+    </label>
+
+    <label class="field">Вес: соответствие программам
+      <input type="number" name="w_match_share" min="0" step="0.01" value="{{ filters.w_match_share }}">
+    </label>
+
+    <label class="field">Вес: пороги ЕГЭ
+      <input type="number" name="w_threshold_share" min="0" step="0.01" value="{{ filters.w_threshold_share }}">
+    </label>
+  </div>
+
   <label class="checkbox-row">
     <input type="checkbox" name="enforce_subject_threshold" value="1" {% if filters.enforce_subject_threshold %}checked{% endif %}>
     Проверять пороги предметов (минимальные баллы ЕГЭ)
   </label>
 
+  <div class="rating-help-row" aria-label="Подсказки по рейтингу">
+    <button
+      type="button"
+      class="hint-pill"
+      data-tip="Средние показатели школы считаются по выбранному периоду (год и план/факт). Если фильтры периода не заданы, берутся все доступные годы."
+    >
+      Как считаются средние
+    </button>
+    <button
+      type="button"
+      class="hint-pill"
+      data-tip="Если включена проверка порогов, то при выбранных предметах/направлениях проверяются только нужные предметы. Если выбор не задан - проверяются пороги по всем предметам ЕГЭ школы."
+    >
+      Проверка порогов
+    </button>
+    <button
+      type="button"
+      class="hint-pill"
+      data-tip="Столбец «Средний балл ЕГЭ по предметам» появляется при выборе предметов или направлений и считается только по релевантным предметам."
+    >
+      Балл по предметам
+    </button>
+  </div>
+
+  <details class="rating-formula">
+    <summary>Как рассчитывается итоговый рейтинг</summary>
+    <p class="muted">
+      Итоговый рейтинг складывается из 4 частей: выпускники, средний балл ЕГЭ, соответствие программам и выполнение порогов ЕГЭ.
+    </p>
+    <p class="muted">
+      Вы сами задаете веса этих частей. Система автоматически приводит их к сумме 1, чтобы оценка считалась корректно.
+    </p>
+    <p class="formula-code">
+      rating_score = w_g * norm(avg_graduates) + w_a * norm(avg_score_all) + w_m * match_share + w_t * threshold_share
+    </p>
+    <p class="muted formula-note">
+      Простыми словами: каждый показатель переводится в шкалу от 0 до 1, умножается на свой вес, и затем все части суммируются.
+      <br>
+      norm(x) = x / max(x) означает: значение школы делится на лучший результат среди школ в текущей выборке.
+      match_share и threshold_share уже лежат в диапазоне от 0 до 1.
+    </p>
+  </details>
+
   <div class="row search-actions">
     <button class="btn" type="submit">Рассчитать рейтинг</button>
+    {% if has_query and ranked %}
+      <button class="btn" type="submit" formaction="/rating/profile/save" formmethod="post">Сохранить рейтинг</button>
+    {% endif %}
     <a class="btn btn-ghost" href="/rating/export{% if current_query %}?{{ current_query }}{% endif %}">Экспорт в Excel</a>
     <a class="btn btn-ghost" href="/rating/profile">Сбросить</a>
     <a class="btn btn-ghost" href="/">В меню</a>
   </div>
 </form>
+
+{% if save_message %}
+  <div class="{{ save_message_kind }}">{{ save_message }}</div>
+{% endif %}
 
 {% if program_requirements %}
   <div class="card">
@@ -251,8 +305,10 @@
               <th>Профили</th>
               <th>Среднее выпускников</th>
               <th>Средний балл ЕГЭ</th>
+              {% if show_admission_subject_avg %}
+                <th>Средний балл ЕГЭ по предметам</th>
+              {% endif %}
               <th>Соответствие программам</th>
-              <th>Порог ЕГЭ</th>
               <th>Итоговый рейтинг</th>
               <th></th>
             </tr>
@@ -267,8 +323,10 @@
                 <td>{{ r.profile_names if r.profile_names else "—" }}</td>
                 <td>{{ r.avg_graduates if r.avg_graduates is not none else "—" }}</td>
                 <td>{{ r.avg_score_all if r.avg_score_all is not none else "—" }}</td>
+                {% if show_admission_subject_avg %}
+                  <td>{{ r.admission_subject_avg if r.admission_subject_avg is not none else "—" }}</td>
+                {% endif %}
                 <td>{{ (r.match_share * 100)|round(1) }}%</td>
-                <td>{{ (r.threshold_share * 100)|round(1) }}%</td>
                 <td>{{ r.rating_score }}</td>
                 <td>
                   <a class="btn btn-small" href="/search/school/{{ r.school_id }}?src=rating{% if current_query %}&{{ current_query }}{% endif %}" onclick="event.stopPropagation();">Карточка</a>

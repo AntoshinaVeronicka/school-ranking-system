@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import traceback
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from urllib.parse import urlencode
@@ -115,6 +116,40 @@ except ImportError:
     )
 
 router = APIRouter()
+
+SEARCH_QUERY_KEYS = {
+    "q",
+    "region_id",
+    "municipality_id",
+    "profile_ids",
+    "year",
+    "kind",
+    "subject_ids",
+    "subject_id",
+    "page",
+    "per_page",
+}
+
+RATING_QUERY_KEYS = {
+    "q",
+    "region_id",
+    "municipality_id",
+    "profile_ids",
+    "year",
+    "kind",
+    "subject_ids",
+    "institute_ids",
+    "institute_id",
+    "program_ids",
+    "min_graduates",
+    "min_avg_score",
+    "enforce_subject_threshold",
+    "w_graduates",
+    "w_avg_score",
+    "w_match_share",
+    "w_threshold_share",
+    "limit",
+}
 
 # 0 Вход / 0.1 Восстановление / 1 Меню / 1.1 Выход
 @router.get("/")
@@ -842,6 +877,89 @@ def _prepare_df_for_excel(df: pd.DataFrame) -> pd.DataFrame:
     return prepared
 
 
+def _has_known_query_params(request: Request, keys: set[str]) -> bool:
+    params = request.query_params
+    return any(key in params for key in keys)
+
+
+@dataclass(frozen=True)
+class SearchRequestParams:
+    q: str
+    region_id: int | None
+    municipality_id: int | None
+    profile_ids: list[int]
+    year: int | None
+    kind: str
+    subject_ids: list[int]
+    page: int
+    per_page: int
+
+
+def _parse_search_request_params(
+    *,
+    q: str,
+    region_id: str | None,
+    municipality_id: str | None,
+    profile_ids: list[str] | None,
+    year: str | None,
+    kind: str,
+    subject_ids: list[str] | None,
+    legacy_subject_id: str | None,
+    page: str | None,
+    per_page: str | None,
+) -> SearchRequestParams:
+    region_id_value = _parse_optional_int(region_id)
+    municipality_id_value = _parse_optional_int(municipality_id)
+    year_value = _parse_optional_int(year)
+
+    subject_ids_value = _parse_int_list(subject_ids)
+    legacy_subject_id_value = _parse_optional_int(legacy_subject_id)
+    if legacy_subject_id_value is not None:
+        subject_ids_value.append(legacy_subject_id_value)
+    subject_ids_value = sorted(set(subject_ids_value))
+
+    profile_ids_value = _parse_int_list(profile_ids)
+    safe_page = _parse_bounded_int(page, default=1, min_value=1)
+    safe_per_page = _parse_bounded_int(per_page, default=20, min_value=5, max_value=200)
+
+    return SearchRequestParams(
+        q=(q or "").strip(),
+        region_id=region_id_value,
+        municipality_id=municipality_id_value,
+        profile_ids=profile_ids_value,
+        year=year_value,
+        kind=(kind or "").strip(),
+        subject_ids=subject_ids_value,
+        page=safe_page,
+        per_page=safe_per_page,
+    )
+
+
+def _build_search_filters_from_params(params: SearchRequestParams) -> SchoolSearchFilters:
+    return _build_search_filters(
+        q=params.q,
+        region_id=params.region_id,
+        municipality_id=params.municipality_id,
+        profile_ids=params.profile_ids,
+        year=params.year,
+        kind=params.kind,
+        subject_ids=params.subject_ids,
+    )
+
+
+def _build_search_query_without_page_from_params(params: SearchRequestParams) -> str:
+    return _build_search_query_without_page(
+        q=params.q,
+        region_id=params.region_id,
+        municipality_id=params.municipality_id,
+        profile_ids=params.profile_ids,
+        year=params.year,
+        kind=params.kind,
+        subject_ids=params.subject_ids,
+        per_page=params.per_page,
+    )
+
+
 @router.get("/search")
 def search_page(
     request: Request,
@@ -855,31 +973,48 @@ def search_page(
     subject_id: str | None = Query(default=None),
     page: str | None = Query(default="1"),
     per_page: str | None = Query(default="20"),
+    save_status: str | None = Query(default=None),
+    saved_request_id: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
     user = require_user(request, db)
-    region_id_value = _parse_optional_int(region_id)
-    municipality_id_value = _parse_optional_int(municipality_id)
-    year_value = _parse_optional_int(year)
-    subject_ids_value = _parse_int_list(subject_ids)
-    legacy_subject_id = _parse_optional_int(subject_id)
-    if legacy_subject_id is not None:
-        subject_ids_value.append(legacy_subject_id)
-    subject_ids_value = sorted(set(subject_ids_value))
-    profile_ids_value = _parse_int_list(profile_ids)
-    safe_page = _parse_bounded_int(page, default=1, min_value=1)
-    safe_per_page = _parse_bounded_int(per_page, default=20, min_value=5, max_value=200)
-    has_query = bool(request.query_params)
-
-    filters = _build_search_filters(
+    params = _parse_search_request_params(
         q=q,
-        region_id=region_id_value,
-        municipality_id=municipality_id_value,
-        profile_ids=profile_ids_value,
-        year=year_value,
+        region_id=region_id,
+        municipality_id=municipality_id,
+        profile_ids=profile_ids,
+        year=year,
         kind=kind,
-        subject_ids=subject_ids_value,
+        subject_ids=subject_ids,
+        legacy_subject_id=subject_id,
+        page=page,
+        per_page=per_page,
     )
+    region_id_value = params.region_id
+    municipality_id_value = params.municipality_id
+    year_value = params.year
+    subject_ids_value = params.subject_ids
+    profile_ids_value = params.profile_ids
+    safe_page = params.page
+    safe_per_page = params.per_page
+    has_query = _has_known_query_params(request, SEARCH_QUERY_KEYS)
+    save_status_value = (save_status or "").strip().lower()
+    saved_request_id_value = _parse_optional_int(saved_request_id)
+    save_message: str | None = None
+    save_message_kind = "ok"
+    if save_status_value == "ok":
+        if saved_request_id_value is not None:
+            save_message = f"Запрос сохранен в системе (request_id={saved_request_id_value})."
+        else:
+            save_message = "Запрос сохранен в системе."
+    elif save_status_value == "empty":
+        save_message_kind = "alert"
+        save_message = "Нечего сохранять: по выбранным фильтрам нет данных."
+    elif save_status_value == "error":
+        save_message_kind = "alert"
+        save_message = "Не удалось сохранить запрос. Проверьте лог приложения."
+
+    filters = _build_search_filters_from_params(params)
     options = fetch_filter_options(region_id=region_id_value)
     results, total = search_schools(filters, page=safe_page, per_page=safe_per_page, apply_pagination=True)
 
@@ -888,45 +1023,7 @@ def search_page(
         safe_page = total_pages
         results, _ = search_schools(filters, page=safe_page, per_page=safe_per_page, apply_pagination=True)
 
-    saved_request_id: int | None = None
-    if has_query:
-        try:
-            save_rows = results
-            try:
-                save_rows, _ = search_schools(filters, page=1, per_page=safe_per_page, apply_pagination=False)
-            except Exception:
-                traceback.print_exc()
-
-            saved_request_id = save_search_request(
-                created_by=user.login,
-                filters={
-                    "q": q.strip(),
-                    "region_id": region_id_value,
-                    "municipality_id": municipality_id_value,
-                    "profile_ids": profile_ids_value,
-                    "year": year_value,
-                    "kind": kind.strip(),
-                    "subject_ids": subject_ids_value,
-                },
-                rows=save_rows,
-                total_rows=total,
-                page=safe_page,
-                per_page=safe_per_page,
-            )
-        except Exception:
-            # Persistence should not break user flow.
-            traceback.print_exc()
-
-    query_without_page = _build_search_query_without_page(
-        q=q.strip(),
-        region_id=region_id_value,
-        municipality_id=municipality_id_value,
-        profile_ids=profile_ids_value,
-        year=year_value,
-        kind=kind.strip(),
-        subject_ids=subject_ids_value,
-        per_page=safe_per_page,
-    )
+    query_without_page = _build_search_query_without_page_from_params(params)
     current_query = query_without_page
     if current_query:
         current_query = f"{current_query}&page={safe_page}"
@@ -945,14 +1042,17 @@ def search_page(
             "total_pages": total_pages,
             "query_without_page": query_without_page,
             "current_query": current_query,
-            "saved_request_id": saved_request_id,
+            "has_query": has_query,
+            "save_message": save_message,
+            "save_message_kind": save_message_kind,
+            "saved_request_id": saved_request_id_value,
             "filters": {
-                "q": q.strip(),
+                "q": params.q,
                 "region_id": region_id_value,
                 "municipality_id": municipality_id_value,
                 "profile_ids": profile_ids_value,
                 "year": year_value,
-                "kind": kind.strip(),
+                "kind": params.kind,
                 "subject_ids": subject_ids_value,
             },
             "regions": options["regions"],
@@ -1007,6 +1107,74 @@ async def search_action(request: Request, db: Session = Depends(get_db)):
     return RedirectResponse(location, status_code=303)
 
 
+@router.post("/search/save")
+async def search_save_action(request: Request, db: Session = Depends(get_db)):
+    user = require_user(request, db)
+    form = await request.form()
+
+    params = _parse_search_request_params(
+        q=str(form.get("q", "")),
+        region_id=str(form.get("region_id", "")),
+        municipality_id=str(form.get("municipality_id", "")),
+        profile_ids=form.getlist("profile_ids"),
+        year=str(form.get("year", "")),
+        kind=str(form.get("kind", "")),
+        subject_ids=form.getlist("subject_ids"),
+        legacy_subject_id=str(form.get("subject_id", "")),
+        page=None,
+        per_page=str(form.get("per_page", "20")),
+    )
+
+    q = params.q
+    region_id = params.region_id
+    municipality_id = params.municipality_id
+    year = params.year
+    kind = params.kind
+    subject_ids = params.subject_ids
+    profile_ids = params.profile_ids
+    per_page = params.per_page
+
+    filters = _build_search_filters_from_params(params)
+
+    save_status = "error"
+    saved_request_id: int | None = None
+    try:
+        rows, total = search_schools(filters, page=1, per_page=per_page, apply_pagination=False)
+        saved_request_id = save_search_request(
+            created_by=user.login,
+            filters={
+                "q": q,
+                "region_id": region_id,
+                "municipality_id": municipality_id,
+                "profile_ids": profile_ids,
+                "year": year,
+                "kind": kind,
+                "subject_ids": subject_ids,
+            },
+            rows=rows,
+            total_rows=total,
+            page=1,
+            per_page=per_page,
+        )
+        save_status = "ok" if saved_request_id is not None else "empty"
+    except Exception:
+        traceback.print_exc()
+        save_status = "error"
+
+    query_without_page = _build_search_query_without_page_from_params(params)
+    status_params: list[tuple[str, str]] = [("page", "1"), ("save_status", save_status)]
+    if saved_request_id is not None:
+        status_params.append(("saved_request_id", str(saved_request_id)))
+    status_query = urlencode(status_params, doseq=True)
+
+    location = "/search"
+    if query_without_page:
+        location = f"/search?{query_without_page}&{status_query}"
+    else:
+        location = f"/search?{status_query}"
+    return RedirectResponse(location, status_code=303)
+
+
 @router.get("/search/municipalities")
 def municipalities_api(region_id: int, request: Request, db: Session = Depends(get_db)):
     require_user(request, db)
@@ -1029,26 +1197,19 @@ def search_export(
     db: Session = Depends(get_db),
 ):
     require_user(request, db)
-    region_id_value = _parse_optional_int(region_id)
-    municipality_id_value = _parse_optional_int(municipality_id)
-    year_value = _parse_optional_int(year)
-    subject_ids_value = _parse_int_list(subject_ids)
-    legacy_subject_id = _parse_optional_int(subject_id)
-    if legacy_subject_id is not None:
-        subject_ids_value.append(legacy_subject_id)
-    subject_ids_value = sorted(set(subject_ids_value))
-    profile_ids_value = _parse_int_list(profile_ids)
-    _parse_bounded_int(per_page, default=20, min_value=5, max_value=200)
-
-    filters = _build_search_filters(
+    params = _parse_search_request_params(
         q=q,
-        region_id=region_id_value,
-        municipality_id=municipality_id_value,
-        profile_ids=profile_ids_value,
-        year=year_value,
+        region_id=region_id,
+        municipality_id=municipality_id,
+        profile_ids=profile_ids,
+        year=year,
         kind=kind,
-        subject_ids=subject_ids_value,
+        subject_ids=subject_ids,
+        legacy_subject_id=subject_id,
+        page=None,
+        per_page=per_page,
     )
+    filters = _build_search_filters_from_params(params)
     rows, _ = search_schools(filters, page=1, per_page=20, apply_pagination=False)
     export_rows = [
         {
@@ -1291,6 +1452,166 @@ def school_card(request: Request, school_id: int, db: Session = Depends(get_db))
 
 
 # 4 Подбор и рейтинг
+@dataclass(frozen=True)
+class RatingRequestParams:
+    q: str
+    region_id: int | None
+    municipality_id: int | None
+    profile_ids: list[int]
+    year: int | None
+    kind: str
+    subject_ids: list[int]
+    institute_ids: list[int]
+    program_ids: list[int]
+    min_graduates: int | None
+    min_avg_score: float | None
+    enforce_subject_threshold: bool
+    w_graduates: float
+    w_avg_score: float
+    w_match_share: float
+    w_threshold_share: float
+    limit: int
+    show_admission_subject_avg: bool
+
+
+def _parse_bool_flag(value: str | None) -> bool:
+    return (value or "").strip().lower() not in {"", "0", "false", "off", "no"}
+
+
+def _parse_rating_request_params(
+    *,
+    q: str,
+    region_id: str | None,
+    municipality_id: str | None,
+    profile_ids: list[str] | None,
+    year: str | None,
+    kind: str,
+    subject_ids: list[str] | None,
+    legacy_subject_id: str | None,
+    institute_ids: list[str] | None,
+    legacy_institute_id: str | None,
+    program_ids: list[str] | None,
+    min_graduates: str | None,
+    min_avg_score: str | None,
+    enforce_subject_threshold: str | None,
+    w_graduates: str | None,
+    w_avg_score: str | None,
+    w_match_share: str | None,
+    w_threshold_share: str | None,
+    limit: str | None,
+) -> RatingRequestParams:
+    region_id_value = _parse_optional_int(region_id)
+    municipality_id_value = _parse_optional_int(municipality_id)
+    year_value = _parse_optional_int(year)
+    profile_ids_value = _parse_int_list(profile_ids)
+
+    subject_ids_value = _parse_int_list(subject_ids)
+    legacy_subject_id_value = _parse_optional_int(legacy_subject_id)
+    if legacy_subject_id_value is not None:
+        subject_ids_value.append(legacy_subject_id_value)
+    subject_ids_value = sorted(set(subject_ids_value))
+
+    institute_ids_value = _parse_int_list(institute_ids)
+    legacy_institute_id_value = _parse_optional_int(legacy_institute_id)
+    if legacy_institute_id_value is not None:
+        institute_ids_value.append(legacy_institute_id_value)
+    institute_ids_value = sorted(set(institute_ids_value))
+    program_ids_value = _parse_int_list(program_ids)
+
+    min_graduates_value = _parse_optional_int(min_graduates)
+    if min_graduates_value is not None and min_graduates_value < 0:
+        min_graduates_value = 0
+
+    min_avg_score_value = _parse_optional_float(min_avg_score)
+    if min_avg_score_value is not None:
+        min_avg_score_value = max(0.0, min(100.0, min_avg_score_value))
+
+    w_graduates_value = _parse_optional_float(w_graduates)
+    w_avg_score_value = _parse_optional_float(w_avg_score)
+    w_match_share_value = _parse_optional_float(w_match_share)
+    w_threshold_share_value = _parse_optional_float(w_threshold_share)
+    if w_graduates_value is None:
+        w_graduates_value = 0.25
+    if w_avg_score_value is None:
+        w_avg_score_value = 0.45
+    if w_match_share_value is None:
+        w_match_share_value = 0.20
+    if w_threshold_share_value is None:
+        w_threshold_share_value = 0.10
+
+    limit_value = _parse_bounded_int(limit, default=300, min_value=10, max_value=2000)
+
+    return RatingRequestParams(
+        q=(q or "").strip(),
+        region_id=region_id_value,
+        municipality_id=municipality_id_value,
+        profile_ids=profile_ids_value,
+        year=year_value,
+        kind=(kind or "").strip(),
+        subject_ids=subject_ids_value,
+        institute_ids=institute_ids_value,
+        program_ids=program_ids_value,
+        min_graduates=min_graduates_value,
+        min_avg_score=min_avg_score_value,
+        enforce_subject_threshold=_parse_bool_flag(enforce_subject_threshold),
+        w_graduates=w_graduates_value,
+        w_avg_score=w_avg_score_value,
+        w_match_share=w_match_share_value,
+        w_threshold_share=w_threshold_share_value,
+        limit=limit_value,
+        show_admission_subject_avg=bool(subject_ids_value) or bool(institute_ids_value) or bool(program_ids_value),
+    )
+
+
+def _build_rating_filters_from_params(params: RatingRequestParams) -> RatingFilters:
+    return RatingFilters(
+        q=params.q,
+        region_id=params.region_id,
+        municipality_id=params.municipality_id,
+        profile_ids=tuple(sorted(set(params.profile_ids))),
+        year=params.year,
+        kind=params.kind or None,
+        subject_ids=tuple(sorted(set(params.subject_ids))),
+        institute_ids=tuple(sorted(set(params.institute_ids))),
+        program_ids=tuple(sorted(set(params.program_ids))),
+        min_graduates=params.min_graduates,
+        min_avg_score=params.min_avg_score,
+        enforce_subject_threshold=params.enforce_subject_threshold,
+        limit=params.limit,
+    )
+
+
+def _build_rating_weights_from_params(params: RatingRequestParams) -> RatingWeights:
+    return RatingWeights(
+        graduates=max(0.0, params.w_graduates),
+        avg_score=max(0.0, params.w_avg_score),
+        match_share=max(0.0, params.w_match_share),
+        threshold_share=max(0.0, params.w_threshold_share),
+    )
+
+
+def _build_rating_query_from_params(params: RatingRequestParams) -> str:
+    return _build_rating_query(
+        q=params.q,
+        region_id=params.region_id,
+        municipality_id=params.municipality_id,
+        profile_ids=params.profile_ids,
+        year=params.year,
+        kind=params.kind,
+        subject_ids=params.subject_ids,
+        institute_ids=params.institute_ids,
+        program_ids=params.program_ids,
+        min_graduates=params.min_graduates,
+        min_avg_score=params.min_avg_score,
+        enforce_subject_threshold=params.enforce_subject_threshold,
+        w_graduates=params.w_graduates,
+        w_avg_score=params.w_avg_score,
+        w_match_share=params.w_match_share,
+        w_threshold_share=params.w_threshold_share,
+        limit=params.limit,
+    )
+
+
 def _build_rating_query(
     *,
     q: str,
@@ -1381,53 +1702,70 @@ def rating_profile(
     w_match_share: str | None = Query(default="0.20"),
     w_threshold_share: str | None = Query(default="0.10"),
     limit: str | None = Query(default="300"),
+    save_status: str | None = Query(default=None),
+    saved_request_id: str | None = Query(default=None),
+    saved_run_id: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
     user = require_user(request, db)
 
-    region_id_value = _parse_optional_int(region_id)
-    municipality_id_value = _parse_optional_int(municipality_id)
-    year_value = _parse_optional_int(year)
-    profile_ids_value = _parse_int_list(profile_ids)
-    subject_ids_value = _parse_int_list(subject_ids)
-    institute_ids_value = _parse_int_list(institute_ids)
-    legacy_institute_id = _parse_optional_int(institute_id)
-    if legacy_institute_id is not None:
-        institute_ids_value.append(legacy_institute_id)
-    institute_ids_value = sorted(set(institute_ids_value))
-    program_ids_value = _parse_int_list(program_ids)
+    params = _parse_rating_request_params(
+        q=q,
+        region_id=region_id,
+        municipality_id=municipality_id,
+        profile_ids=profile_ids,
+        year=year,
+        kind=kind,
+        subject_ids=subject_ids,
+        legacy_subject_id=None,
+        institute_ids=institute_ids,
+        legacy_institute_id=institute_id,
+        program_ids=program_ids,
+        min_graduates=min_graduates,
+        min_avg_score=min_avg_score,
+        enforce_subject_threshold=enforce_subject_threshold,
+        w_graduates=w_graduates,
+        w_avg_score=w_avg_score,
+        w_match_share=w_match_share,
+        w_threshold_share=w_threshold_share,
+        limit=limit,
+    )
 
-    min_graduates_value = _parse_optional_int(min_graduates)
-    if min_graduates_value is not None and min_graduates_value < 0:
-        min_graduates_value = 0
-
-    min_avg_score_value = _parse_optional_float(min_avg_score)
-    if min_avg_score_value is not None:
-        min_avg_score_value = max(0.0, min(100.0, min_avg_score_value))
-
-    enforce_threshold_value = (enforce_subject_threshold or "").strip().lower() not in {
-        "",
-        "0",
-        "false",
-        "off",
-        "no",
-    }
-
-    w_graduates_value = _parse_optional_float(w_graduates)
-    w_avg_score_value = _parse_optional_float(w_avg_score)
-    w_match_share_value = _parse_optional_float(w_match_share)
-    w_threshold_share_value = _parse_optional_float(w_threshold_share)
-    if w_graduates_value is None:
-        w_graduates_value = 0.25
-    if w_avg_score_value is None:
-        w_avg_score_value = 0.45
-    if w_match_share_value is None:
-        w_match_share_value = 0.20
-    if w_threshold_share_value is None:
-        w_threshold_share_value = 0.10
-
-    limit_value = _parse_bounded_int(limit, default=300, min_value=10, max_value=2000)
-    has_query = bool(request.query_params)
+    region_id_value = params.region_id
+    municipality_id_value = params.municipality_id
+    year_value = params.year
+    profile_ids_value = params.profile_ids
+    subject_ids_value = params.subject_ids
+    institute_ids_value = params.institute_ids
+    program_ids_value = params.program_ids
+    min_graduates_value = params.min_graduates
+    min_avg_score_value = params.min_avg_score
+    enforce_threshold_value = params.enforce_subject_threshold
+    w_graduates_value = params.w_graduates
+    w_avg_score_value = params.w_avg_score
+    w_match_share_value = params.w_match_share
+    w_threshold_share_value = params.w_threshold_share
+    limit_value = params.limit
+    show_admission_subject_avg = params.show_admission_subject_avg
+    has_query = _has_known_query_params(request, RATING_QUERY_KEYS)
+    save_status_value = (save_status or "").strip().lower()
+    saved_request_id_value = _parse_optional_int(saved_request_id)
+    saved_run_id_value = _parse_optional_int(saved_run_id)
+    save_message: str | None = None
+    save_message_kind = "ok"
+    if save_status_value == "ok":
+        if saved_run_id_value is not None:
+            save_message = f"Рейтинг сохранен в системе (run_id={saved_run_id_value})."
+        elif saved_request_id_value is not None:
+            save_message = f"Рейтинг сохранен в системе (request_id={saved_request_id_value})."
+        else:
+            save_message = "Рейтинг сохранен в системе."
+    elif save_status_value == "empty":
+        save_message_kind = "alert"
+        save_message = "Нечего сохранять: по выбранным фильтрам нет данных."
+    elif save_status_value == "error":
+        save_message_kind = "alert"
+        save_message = "Не удалось сохранить рейтинг. Проверьте лог приложения."
 
     options = fetch_rating_filter_options(region_id=region_id_value, institute_ids=tuple(institute_ids_value))
     program_requirements = fetch_program_requirements(
@@ -1436,103 +1774,37 @@ def rating_profile(
     )
 
     ranked: list[dict[str, object]] = []
-    saved_request_id: int | None = None
-    saved_run_id: int | None = None
     if has_query:
-        filters = RatingFilters(
-            q=q.strip(),
-            region_id=region_id_value,
-            municipality_id=municipality_id_value,
-            profile_ids=tuple(sorted(set(profile_ids_value))),
-            year=year_value,
-            kind=kind.strip() or None,
-            subject_ids=tuple(sorted(set(subject_ids_value))),
-            institute_ids=tuple(sorted(set(institute_ids_value))),
-            program_ids=tuple(sorted(set(program_ids_value))),
-            min_graduates=min_graduates_value,
-            min_avg_score=min_avg_score_value,
-            enforce_subject_threshold=enforce_threshold_value,
-            limit=limit_value,
+        ranked = calculate_school_rating(
+            _build_rating_filters_from_params(params),
+            _build_rating_weights_from_params(params),
         )
-        weights = RatingWeights(
-            graduates=max(0.0, w_graduates_value),
-            avg_score=max(0.0, w_avg_score_value),
-            match_share=max(0.0, w_match_share_value),
-            threshold_share=max(0.0, w_threshold_share_value),
-        )
-        ranked = calculate_school_rating(filters, weights)
-        try:
-            saved = save_rating_run(
-                created_by=user.login,
-                filters={
-                    "q": q.strip(),
-                    "region_id": region_id_value,
-                    "municipality_id": municipality_id_value,
-                    "profile_ids": profile_ids_value,
-                    "year": year_value,
-                    "kind": kind.strip(),
-                    "subject_ids": subject_ids_value,
-                    "institute_ids": institute_ids_value,
-                    "program_ids": program_ids_value,
-                    "min_graduates": min_graduates_value,
-                    "min_avg_score": min_avg_score_value,
-                    "enforce_subject_threshold": enforce_threshold_value,
-                    "limit": limit_value,
-                },
-                weights={
-                    "w_graduates": w_graduates_value,
-                    "w_avg_score": w_avg_score_value,
-                    "w_match_share": w_match_share_value,
-                    "w_threshold_share": w_threshold_share_value,
-                },
-                ranked_rows=ranked,
-            )
-            if saved:
-                saved_request_id = int(saved.get("request_id", 0) or 0) or None
-                saved_run_id = int(saved.get("run_id", 0) or 0) or None
-        except Exception:
-            # Persistence should not break user flow.
-            traceback.print_exc()
 
-    current_query = _build_rating_query(
-        q=q.strip(),
-        region_id=region_id_value,
-        municipality_id=municipality_id_value,
-        profile_ids=profile_ids_value,
-        year=year_value,
-        kind=kind.strip(),
-        subject_ids=subject_ids_value,
-        institute_ids=institute_ids_value,
-        program_ids=program_ids_value,
-        min_graduates=min_graduates_value,
-        min_avg_score=min_avg_score_value,
-        enforce_subject_threshold=enforce_threshold_value,
-        w_graduates=w_graduates_value,
-        w_avg_score=w_avg_score_value,
-        w_match_share=w_match_share_value,
-        w_threshold_share=w_threshold_share_value,
-        limit=limit_value,
-    )
+    current_query = _build_rating_query_from_params(params)
 
     return render(
         "rating_profile.html",
         {
             "request": request,
             "user": user,
+            "main_class": "container-rating",
             "has_query": has_query,
+            "show_admission_subject_avg": show_admission_subject_avg,
             "ranked": ranked,
             "total": len(ranked),
             "program_requirements": program_requirements,
             "current_query": current_query,
-            "saved_request_id": saved_request_id,
-            "saved_run_id": saved_run_id,
+            "save_message": save_message,
+            "save_message_kind": save_message_kind,
+            "saved_request_id": saved_request_id_value,
+            "saved_run_id": saved_run_id_value,
             "filters": {
-                "q": q.strip(),
+                "q": params.q,
                 "region_id": region_id_value,
                 "municipality_id": municipality_id_value,
                 "profile_ids": profile_ids_value,
                 "year": year_value,
-                "kind": kind.strip(),
+                "kind": params.kind,
                 "subject_ids": subject_ids_value,
                 "institute_ids": institute_ids_value,
                 "program_ids": program_ids_value,
@@ -1555,6 +1827,109 @@ def rating_profile(
             "programs": options["programs"],
         },
     )
+
+
+@router.post("/rating/profile/save")
+async def rating_profile_save_action(request: Request, db: Session = Depends(get_db)):
+    user = require_user(request, db)
+    form = await request.form()
+
+    params = _parse_rating_request_params(
+        q=str(form.get("q", "")),
+        region_id=str(form.get("region_id", "")),
+        municipality_id=str(form.get("municipality_id", "")),
+        profile_ids=form.getlist("profile_ids"),
+        year=str(form.get("year", "")),
+        kind=str(form.get("kind", "")),
+        subject_ids=form.getlist("subject_ids"),
+        legacy_subject_id=str(form.get("subject_id", "")),
+        institute_ids=form.getlist("institute_ids"),
+        legacy_institute_id=str(form.get("institute_id", "")),
+        program_ids=form.getlist("program_ids"),
+        min_graduates=str(form.get("min_graduates", "0")),
+        min_avg_score=str(form.get("min_avg_score", "")),
+        enforce_subject_threshold=str(form.get("enforce_subject_threshold", "")),
+        w_graduates=str(form.get("w_graduates", "0.25")),
+        w_avg_score=str(form.get("w_avg_score", "0.45")),
+        w_match_share=str(form.get("w_match_share", "0.20")),
+        w_threshold_share=str(form.get("w_threshold_share", "0.10")),
+        limit=str(form.get("limit", "300")),
+    )
+    current_query = _build_rating_query_from_params(params)
+
+    q = params.q
+    kind = params.kind
+    region_id_value = params.region_id
+    municipality_id_value = params.municipality_id
+    year_value = params.year
+    profile_ids_value = params.profile_ids
+    subject_ids_value = params.subject_ids
+    institute_ids_value = params.institute_ids
+    program_ids_value = params.program_ids
+    min_graduates_value = params.min_graduates
+    min_avg_score_value = params.min_avg_score
+    enforce_threshold_value = params.enforce_subject_threshold
+    w_graduates_value = params.w_graduates
+    w_avg_score_value = params.w_avg_score
+    w_match_share_value = params.w_match_share
+    w_threshold_share_value = params.w_threshold_share
+    limit_value = params.limit
+
+    save_status = "error"
+    saved_request_id_value: int | None = None
+    saved_run_id_value: int | None = None
+    try:
+        ranked = calculate_school_rating(
+            _build_rating_filters_from_params(params),
+            _build_rating_weights_from_params(params),
+        )
+        saved = save_rating_run(
+            created_by=user.login,
+            filters={
+                "q": q,
+                "region_id": region_id_value,
+                "municipality_id": municipality_id_value,
+                "profile_ids": profile_ids_value,
+                "year": year_value,
+                "kind": kind,
+                "subject_ids": subject_ids_value,
+                "institute_ids": institute_ids_value,
+                "program_ids": program_ids_value,
+                "min_graduates": min_graduates_value,
+                "min_avg_score": min_avg_score_value,
+                "enforce_subject_threshold": enforce_threshold_value,
+                "limit": limit_value,
+            },
+            weights={
+                "w_graduates": w_graduates_value,
+                "w_avg_score": w_avg_score_value,
+                "w_match_share": w_match_share_value,
+                "w_threshold_share": w_threshold_share_value,
+            },
+            ranked_rows=ranked,
+        )
+        if saved:
+            saved_request_id_value = int(saved.get("request_id", 0) or 0) or None
+            saved_run_id_value = int(saved.get("run_id", 0) or 0) or None
+            save_status = "ok" if saved_run_id_value is not None else "empty"
+        else:
+            save_status = "empty"
+    except Exception:
+        traceback.print_exc()
+        save_status = "error"
+
+    status_params: list[tuple[str, str]] = [("save_status", save_status)]
+    if saved_request_id_value is not None:
+        status_params.append(("saved_request_id", str(saved_request_id_value)))
+    if saved_run_id_value is not None:
+        status_params.append(("saved_run_id", str(saved_run_id_value)))
+    status_query = urlencode(status_params, doseq=True)
+
+    if current_query:
+        location = f"/rating/profile?{current_query}&{status_query}"
+    else:
+        location = f"/rating/profile?{status_query}"
+    return RedirectResponse(location, status_code=303)
 
 
 @router.get("/rating/export")
@@ -1582,74 +1957,51 @@ def rating_export(
 ):
     require_user(request, db)
 
-    region_id_value = _parse_optional_int(region_id)
-    municipality_id_value = _parse_optional_int(municipality_id)
-    year_value = _parse_optional_int(year)
-    profile_ids_value = _parse_int_list(profile_ids)
-    subject_ids_value = _parse_int_list(subject_ids)
-    institute_ids_value = _parse_int_list(institute_ids)
-    legacy_institute_id = _parse_optional_int(institute_id)
-    if legacy_institute_id is not None:
-        institute_ids_value.append(legacy_institute_id)
-    institute_ids_value = sorted(set(institute_ids_value))
-    program_ids_value = _parse_int_list(program_ids)
+    params = _parse_rating_request_params(
+        q=q,
+        region_id=region_id,
+        municipality_id=municipality_id,
+        profile_ids=profile_ids,
+        year=year,
+        kind=kind,
+        subject_ids=subject_ids,
+        legacy_subject_id=None,
+        institute_ids=institute_ids,
+        legacy_institute_id=institute_id,
+        program_ids=program_ids,
+        min_graduates=min_graduates,
+        min_avg_score=min_avg_score,
+        enforce_subject_threshold=enforce_subject_threshold,
+        w_graduates=w_graduates,
+        w_avg_score=w_avg_score,
+        w_match_share=w_match_share,
+        w_threshold_share=w_threshold_share,
+        limit=limit,
+    )
 
-    min_graduates_value = _parse_optional_int(min_graduates)
-    if min_graduates_value is not None and min_graduates_value < 0:
-        min_graduates_value = 0
-
-    min_avg_score_value = _parse_optional_float(min_avg_score)
-    if min_avg_score_value is not None:
-        min_avg_score_value = max(0.0, min(100.0, min_avg_score_value))
-
-    enforce_threshold_value = (enforce_subject_threshold or "").strip().lower() not in {
-        "",
-        "0",
-        "false",
-        "off",
-        "no",
-    }
-
-    w_graduates_value = _parse_optional_float(w_graduates)
-    w_avg_score_value = _parse_optional_float(w_avg_score)
-    w_match_share_value = _parse_optional_float(w_match_share)
-    w_threshold_share_value = _parse_optional_float(w_threshold_share)
-    if w_graduates_value is None:
-        w_graduates_value = 0.25
-    if w_avg_score_value is None:
-        w_avg_score_value = 0.45
-    if w_match_share_value is None:
-        w_match_share_value = 0.20
-    if w_threshold_share_value is None:
-        w_threshold_share_value = 0.10
-
-    limit_value = _parse_bounded_int(limit, default=300, min_value=10, max_value=2000)
+    region_id_value = params.region_id
+    municipality_id_value = params.municipality_id
+    year_value = params.year
+    profile_ids_value = params.profile_ids
+    subject_ids_value = params.subject_ids
+    institute_ids_value = params.institute_ids
+    program_ids_value = params.program_ids
+    min_graduates_value = params.min_graduates
+    min_avg_score_value = params.min_avg_score
+    enforce_threshold_value = params.enforce_subject_threshold
+    w_graduates_value = params.w_graduates
+    w_avg_score_value = params.w_avg_score
+    w_match_share_value = params.w_match_share
+    w_threshold_share_value = params.w_threshold_share
+    limit_value = params.limit
     has_query = bool(request.query_params)
 
     ranked: list[dict[str, object]] = []
     if has_query:
-        filters = RatingFilters(
-            q=q.strip(),
-            region_id=region_id_value,
-            municipality_id=municipality_id_value,
-            profile_ids=tuple(sorted(set(profile_ids_value))),
-            year=year_value,
-            kind=kind.strip() or None,
-            subject_ids=tuple(sorted(set(subject_ids_value))),
-            institute_ids=tuple(sorted(set(institute_ids_value))),
-            program_ids=tuple(sorted(set(program_ids_value))),
-            min_graduates=min_graduates_value,
-            min_avg_score=min_avg_score_value,
-            enforce_subject_threshold=enforce_threshold_value,
-            limit=limit_value,
+        ranked = calculate_school_rating(
+            _build_rating_filters_from_params(params),
+            _build_rating_weights_from_params(params),
         )
-        weights = RatingWeights(
-            graduates=max(0.0, w_graduates_value),
-            avg_score=max(0.0, w_avg_score_value),
-            match_share=max(0.0, w_match_share_value),
-            threshold_share=max(0.0, w_threshold_share_value),
-        )
-        ranked = calculate_school_rating(filters, weights)
 
     export_rows = [
         {
@@ -1697,12 +2049,12 @@ def rating_export(
 
     filters_df = pd.DataFrame(
         [
-            {"key": "q", "value": q.strip()},
+            {"key": "q", "value": params.q},
             {"key": "region_id", "value": region_id_value},
             {"key": "municipality_id", "value": municipality_id_value},
             {"key": "profile_ids", "value": ",".join(str(v) for v in sorted(set(profile_ids_value)))},
             {"key": "year", "value": year_value},
-            {"key": "kind", "value": kind.strip()},
+            {"key": "kind", "value": params.kind},
             {"key": "subject_ids", "value": ",".join(str(v) for v in sorted(set(subject_ids_value)))},
             {"key": "institute_ids", "value": ",".join(str(v) for v in sorted(set(institute_ids_value)))},
             {"key": "program_ids", "value": ",".join(str(v) for v in sorted(set(program_ids_value)))},

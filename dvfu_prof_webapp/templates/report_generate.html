@@ -33,6 +33,16 @@
   <div class="ok">{{ ok }}</div>
 {% endif %}
 
+{% if not runs %}
+  <div class="card">
+    <p class="muted">Сохраненных расчетов пока нет. Чтобы открыть выгрузки и формировать отчеты, сначала сохраните рейтинг на форме «Подбор и рейтинг школ» или «Поиск школ» кнопкой «Сохранить рейтинг в системе».</p>
+    <div class="row">
+      <a class="btn btn-ghost" href="/rating/profile">Подбор и рейтинг школ</a>
+      <a class="btn btn-ghost" href="/search">Поиск школ</a>
+    </div>
+  </div>
+{% endif %}
+
 {% if selected_run %}
   <div class="card">
     <h2>Выбран расчет #{{ selected_run.run_id }}</h2>
