@@ -1,19 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Загрузка данных ЕГЭ из Excel в PostgreSQL (edu.*).
+???????? ?????????? ??? ?? Excel ? ??????? edu.*.
 
-Поддерживает 2 формата:
-A) Предварительные данные (kind=plan) – фиксированные колонки + 1 колонка "выбрали" на предмет.
-B) Фактические данные (kind=actual) – фиксированные колонки + многоуровневые заголовки по метрикам на предмет.
-
-Таблицы:
-- edu.ege_school_year (school_id, year, kind)
-- edu.ege_school_subject_stat (ege_school_year_id, subject_id)
-
-Сопоставление школ:
-- Нормализуем school.full_name из БД и school из Excel одной функцией
-- Основной матч: (муниципалитет, школа)
-- Fallback: по школе, если имя уникально в выбранном регионе
+?????? ?????? ????, ???????????? ????? ?? ????????????,
+?????????? ?????????? ? ????????? upsert ? ??.
 """
 
 from __future__ import annotations
@@ -46,7 +36,7 @@ from load_common import (
 try:
     import psycopg2
     from psycopg2.extras import execute_values
-except Exception:
+except ImportError:
     psycopg2 = None  # type: ignore
     execute_values = None  # type: ignore
 
@@ -55,7 +45,7 @@ warnings.filterwarnings(
 )
 
 
-# -------------------- logging --------------------
+# ???????????.
 
 def setup_logging(level: str = "INFO") -> None:
     logging.basicConfig(
@@ -64,7 +54,7 @@ def setup_logging(level: str = "INFO") -> None:
     )
 
 
-# -------------------- subjects --------------------
+# ?????????? ?????????.
 
 SUBJECT_CANON: List[str] = [
     "Русский язык",
@@ -113,7 +103,7 @@ def normalize_subject_title(x: Any) -> str:
     return s0
 
 
-# -------------------- converters --------------------
+# ?????????????? ????????.
 
 def to_int(v: Any) -> Optional[int]:
     if v is None:
@@ -145,7 +135,7 @@ def to_decimal_2(v: Any) -> Optional[Decimal]:
         return None
 
 
-# -------------------- excel reading helpers --------------------
+# ?????? ? ?????????? Excel.
 
 def choose_sheet(path: Path, default_sheet: Optional[str] = None) -> str:
     xls = pd.ExcelFile(path)
@@ -488,9 +478,93 @@ class SchoolRow:
     municipality_name: Optional[str]
 
 
+PRIMORSKY_REGION_KEY = "приморский край"
+
+
+def _normalize_region_key(value: Any) -> str:
+    text = norm_spaces(value).casefold()
+    return re.sub(r"[^0-9a-zа-я]+", " ", text).strip()
+
+
+def is_primorsky_region(region_name: Optional[str]) -> bool:
+    if not region_name:
+        return False
+    region_key = _normalize_region_key(region_name)
+    return region_key == PRIMORSKY_REGION_KEY or ("приморск" in region_key and "край" in region_key)
+
+
+def resolve_region_name(cur, region_name: Optional[str]) -> Optional[str]:
+    """
+    Возвращает каноническое имя региона из edu.region.
+    Поддерживает нестрогий ввод (например, имя файла с добавленными словами/годом).
+    """
+    if not region_name:
+        return None
+    raw = norm_spaces(region_name)
+    if not raw:
+        return None
+
+    cur.execute(
+        """
+        SELECT name
+        FROM edu.region
+        WHERE lower(name) = lower(%s)
+        LIMIT 1
+        """,
+        (raw,),
+    )
+    exact = cur.fetchone()
+    if exact and exact[0]:
+        return str(exact[0])
+
+    cur.execute(
+        """
+        SELECT name
+        FROM edu.region
+        WHERE lower(%s) LIKE '%%' || lower(name) || '%%'
+           OR lower(name) LIKE '%%' || lower(%s) || '%%'
+        ORDER BY char_length(name) DESC, name
+        """,
+        (raw, raw),
+    )
+    seen: set[str] = set()
+    matches: list[str] = []
+    for row in cur.fetchall():
+        if not row or not row[0]:
+            continue
+        name = str(row[0])
+        if name in seen:
+            continue
+        seen.add(name)
+        matches.append(name)
+
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def extract_school_code3(name: Any) -> Optional[str]:
+    """
+    Для строк вида "(286) МБОУ СОШ № 14 ..." извлекает "286".
+    Для коротких кодов "(8) ..." делает zero-pad до 3 знаков: "008".
+    Для длинных кодов берет первые 3 цифры.
+    """
+    s = norm_spaces(name)
+    if not s:
+        return None
+
+    m = re.match(r"^\s*\(?\s*(\d+)\s*\)?", s)
+    if not m:
+        return None
+
+    digits = m.group(1)
+    return digits[:3].zfill(3)
+
+
 def fetch_schools(cur, region_name: Optional[str]) -> List[SchoolRow]:
     """
-    Пытаемся подтянуть школы вместе с муниципалитетом и фильтром по региону.
+    Загружаем школы вместе с муниципалитетом.
+    region_name должен быть каноническим именем региона из edu.region.
     """
     if region_name:
         cur.execute(
@@ -514,6 +588,25 @@ def fetch_schools(cur, region_name: Optional[str]) -> List[SchoolRow]:
 
     rows = cur.fetchall()
     return [SchoolRow(int(r[0]), str(r[1]), str(r[2]) if r[2] is not None else None) for r in rows]
+
+
+def build_school_code3_index(schools: List[SchoolRow]) -> Tuple[Dict[str, int], set[str]]:
+    code_ids: Dict[str, List[int]] = {}
+    for s in schools:
+        code3 = extract_school_code3(s.full_name)
+        if not code3:
+            continue
+        code_ids.setdefault(code3, []).append(s.school_id)
+
+    code_first: Dict[str, int] = {}
+    code_amb: set[str] = set()
+    for code3, ids in code_ids.items():
+        uniq = sorted(set(ids))
+        code_first[code3] = uniq[0]
+        if len(uniq) > 1:
+            code_amb.add(code3)
+
+    return code_first, code_amb
 
 
 def build_school_index(
@@ -578,7 +671,7 @@ def build_school_index(
     return pair_exact_unique, pair_unique, school_unique, pair_exact_amb, pair_amb, school_amb
 
 
-# -------------------- upsert --------------------
+# ?????? ?????? ? ?? (upsert).
 
 def upsert_ege_school_year(cur, rows: List[Tuple[int, int, str, int]]) -> Dict[int, int]:
     """
@@ -643,11 +736,11 @@ def merge_subject_acc(dst: Dict[str, Any], src: Dict[str, Any]) -> None:
     - counts: суммируем
     - avg_score: считаем среднее взвешенное по participants_cnt (если есть), иначе по 1
     """
-    # counts
+    # ????????.
     for k in ("participants_cnt", "not_passed_cnt", "high_80_99_cnt", "score_100_cnt", "chosen_cnt"):
         dst[k] = _sum_int(dst.get(k), src.get(k))
 
-    # avg
+    # ??????? ????????.
     a = src.get("avg_score")
     if a is None:
         return
@@ -736,7 +829,7 @@ def sanitize_subject_metrics(
             metrics[key] = participants
 
 
-# -------------------- main load --------------------
+# ???????? ??????? ????????.
 
 def load_ege_to_db(
     path: Path,
@@ -785,8 +878,32 @@ def load_ege_to_db(
 
             # справочники
             subject_name_to_id = fetch_subject_map(cur)
-            schools = fetch_schools(cur, region_name=region_name)
+            resolved_region_name = resolve_region_name(cur, region_name)
+            if region_name and not resolved_region_name:
+                logging.warning(
+                    "Регион '%s' не распознан, сопоставление школ выполняется без фильтра по региону.",
+                    region_name,
+                )
+            elif (
+                region_name
+                and resolved_region_name
+                and norm_spaces(region_name).casefold() != norm_spaces(resolved_region_name).casefold()
+            ):
+                logging.info("Регион '%s' сопоставлен как '%s'.", region_name, resolved_region_name)
+
+            schools = fetch_schools(cur, region_name=resolved_region_name)
             pair_exact_unique, pair_unique, school_unique, pair_exact_amb, pair_amb, school_amb = build_school_index(schools)
+            use_code3_fallback = is_primorsky_region(resolved_region_name)
+            code3_first: Dict[str, int] = {}
+            code3_amb: set[str] = set()
+            if use_code3_fallback:
+                code3_first, code3_amb = build_school_code3_index(schools)
+                logging.info(
+                    "Включен fallback по коду школы для региона '%s': mapped=%s ambiguous=%s",
+                    resolved_region_name,
+                    len(code3_first),
+                    len(code3_amb),
+                )
 
             # аккумулируем по school_id
             per_school_grads: Dict[int, int] = {}
@@ -798,27 +915,42 @@ def load_ege_to_db(
 
             for _, r in df.iterrows():
                 mun = normalize_municipality_name(r.get("municipality"))
-                sch = standardize_school_name(r.get("school"))
+                school_raw = r.get("school")
+                sch = standardize_school_name(school_raw)
                 if not mun or not sch:
                     continue
 
                 mk = make_muni_key(mun)
                 sk = make_school_key(sch)
+                code3 = extract_school_code3(school_raw) if use_code3_fallback else None
 
                 sid = pair_exact_unique.get((mun, sk))
                 if sid is None:
                     sid = pair_unique.get((mk, sk))
+                if sid is None and code3 is not None:
+                    sid = code3_first.get(code3)
                 if sid is None:
                     sid = school_unique.get(sk)
 
                 if sid is None:
                     # различаем "не нашли" и "неоднозначно"
-                    if (mun, sk) in pair_exact_amb or (mk, sk) in pair_amb or sk in school_amb:
+                    code3_is_amb = bool(code3 and code3 in code3_amb)
+                    if (mun, sk) in pair_exact_amb or (mk, sk) in pair_amb or sk in school_amb or code3_is_amb:
                         skipped_ambiguous += 1
-                        logging.warning("Неоднозначная школа: municipality='%s' school='%s'", mun, sch)
+                        logging.warning(
+                            "Неоднозначная школа: municipality='%s' school='%s' code3='%s'",
+                            mun,
+                            sch,
+                            code3 or "",
+                        )
                     else:
                         skipped_not_found += 1
-                        logging.warning("Школа не найдена: municipality='%s' school='%s'", mun, sch)
+                        logging.warning(
+                            "Школа не найдена: municipality='%s' school='%s' code3='%s'",
+                            mun,
+                            sch,
+                            code3 or "",
+                        )
                     continue
 
                 matched += 1
@@ -969,7 +1101,7 @@ def load_ege_to_db(
             )
 
 
-# -------------------- CLI --------------------
+# ????????? ????????? ??????.
 
 def main() -> None:
     setup_logging(os.getenv("LOG_LEVEL", "INFO"))

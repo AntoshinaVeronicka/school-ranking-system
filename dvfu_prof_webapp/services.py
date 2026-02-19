@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import hmac
 import json
+import logging
+import os
+import secrets
 import subprocess
 import sys
 import traceback
+from threading import BoundedSemaphore
 from pathlib import Path
 from typing import Any
 
@@ -34,8 +39,23 @@ except ImportError:
     from db import ImportJob, User
 
 
-# Security / sessions
+# ???????????? ? ??????.
 pwd = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+CSRF_SESSION_KEY = "_csrf_token"
+logger = logging.getLogger(__name__)
+try:
+    IMPORT_MAX_CONCURRENT = max(1, int(os.getenv("IMPORT_MAX_CONCURRENT", "2")))
+except ValueError:
+    IMPORT_MAX_CONCURRENT = 2
+IMPORT_SEMAPHORE = BoundedSemaphore(IMPORT_MAX_CONCURRENT)
+
+
+def _acquire_import_slot() -> bool:
+    return IMPORT_SEMAPHORE.acquire(blocking=False)
+
+
+def _release_import_slot() -> None:
+    IMPORT_SEMAPHORE.release()
 
 
 def hash_password(password: str) -> str:
@@ -44,6 +64,22 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, password_hash: str) -> bool:
     return pwd.verify(password, password_hash)
+
+
+def get_csrf_token(request: Request) -> str:
+    token = request.session.get(CSRF_SESSION_KEY)
+    if isinstance(token, str) and token:
+        return token
+    token = secrets.token_urlsafe(32)
+    request.session[CSRF_SESSION_KEY] = token
+    return token
+
+
+def validate_csrf_token(request: Request, token: str | None) -> None:
+    expected = get_csrf_token(request)
+    provided = (token or "").strip() or (request.headers.get("x-csrf-token") or "").strip()
+    if not provided or not hmac.compare_digest(expected, provided):
+        raise PermissionError("invalid csrf token")
 
 
 def get_current_user(request: Request, db: Session) -> User | None:
@@ -67,7 +103,7 @@ def require_admin(request: Request, db: Session) -> User:
     return user
 
 
-# Forms/helpers
+# ????? ? ??????????????? ???????.
 def default_ege_form() -> dict[str, Any]:
     return {"region": "", "kind": "actual", "sheet": "", "year": "", "dry_run": False}
 
@@ -118,6 +154,34 @@ def infer_year_from_sheet_name(sheet_name: str) -> int | None:
     return infer_year_from_sheet(sheet_name)
 
 
+def _run_script_command(
+    cmd: list[str],
+    *,
+    timeout_seconds: int,
+    timeout_message: str | None = None,
+    empty_output_message: str | None = None,
+) -> tuple[bool, str]:
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        if timeout_message:
+            return False, timeout_message
+        return False, f"Выполнение прервано по тайм-ауту ({timeout_seconds} секунд)."
+    except (OSError, ValueError):
+        logger.exception("Не удалось запустить внешнюю команду: %s", " ".join(cmd))
+        return False, traceback.format_exc()
+
+    output_parts = [part.strip() for part in [proc.stdout, proc.stderr] if part and part.strip()]
+    output_text = "\n\n".join(output_parts) if output_parts else (empty_output_message or "(Скрипт завершился без вывода.)")
+    return proc.returncode == 0, output_text
+
+
 def run_ege_loader_script(
     *,
     file_path: Path,
@@ -127,6 +191,9 @@ def run_ege_loader_script(
     region: str | None,
     dry_run: bool,
 ) -> tuple[bool, str]:
+    if not _acquire_import_slot():
+        return False, "Слишком много одновременно запущенных импортов. Повторите запуск позже."
+
     cmd = [
         sys.executable,
         str(LOAD_EGE_SCRIPT),
@@ -145,21 +212,14 @@ def run_ege_loader_script(
         cmd.append("--dry-run")
 
     try:
-        proc = subprocess.run(
+        return _run_script_command(
             cmd,
-            cwd=str(PROJECT_ROOT),
-            capture_output=True,
-            text=True,
-            timeout=300,
+            timeout_seconds=300,
+            timeout_message="Загрузка прервана по тайм-ауту (превышено 300 секунд).",
+            empty_output_message="(Скрипт завершился без вывода.)",
         )
-    except subprocess.TimeoutExpired:
-        return False, "Загрузка прервана по тайм-ауту (превышено 300 секунд)."
-    except Exception:
-        return False, traceback.format_exc()
-
-    output_parts = [part.strip() for part in [proc.stdout, proc.stderr] if part and part.strip()]
-    output_text = "\n\n".join(output_parts) if output_parts else "(Скрипт завершился без вывода.)"
-    return proc.returncode == 0, output_text
+    finally:
+        _release_import_slot()
 
 
 def run_script_with_output(
@@ -167,23 +227,19 @@ def run_script_with_output(
     args: list[str],
     timeout_seconds: int = 300,
 ) -> tuple[bool, str]:
+    if not _acquire_import_slot():
+        return False, "Слишком много одновременно запущенных импортов. Повторите запуск позже."
+
     cmd = [sys.executable, str(script_path), *args]
     try:
-        proc = subprocess.run(
+        return _run_script_command(
             cmd,
-            cwd=str(PROJECT_ROOT),
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
+            timeout_seconds=timeout_seconds,
+            timeout_message=f"Выполнение прервано по тайм-ауту ({timeout_seconds} секунд).",
+            empty_output_message="(Скрипт завершился без вывода.)",
         )
-    except subprocess.TimeoutExpired:
-        return False, f"Выполнение прервано по тайм-ауту ({timeout_seconds} секунд)."
-    except Exception:
-        return False, traceback.format_exc()
-
-    output_parts = [part.strip() for part in [proc.stdout, proc.stderr] if part and part.strip()]
-    output_text = "\n\n".join(output_parts) if output_parts else "(Скрипт завершился без вывода.)"
-    return proc.returncode == 0, output_text
+    finally:
+        _release_import_slot()
 
 
 def render_generic_import_page(
@@ -263,7 +319,6 @@ def process_generic_import_upload(
 
         region_value = region.strip() or filepath.stem.replace("_", " ").strip()
         is_dry_run = dry_run is not None
-
         dialog_lines = [
             "Параметры запуска:",
             f"- Файл: {safe_name}",
@@ -305,7 +360,25 @@ def process_generic_import_upload(
             ok="Файл принят. Черновая форма импорта отработала успешно.",
             dialog_output=dialog_output,
         )
+    except (ValueError, RuntimeError, OSError, PermissionError) as exc:
+        logger.warning("Ошибка обработки импорта '%s': file=%s, err=%s", job_type, safe_name, exc)
+        dialog_output = traceback.format_exc()
+        job.status = "error"
+        job.details = json.dumps({"error": str(exc), "traceback": dialog_output[-12000:]}, ensure_ascii=False)
+        db.commit()
+        return render_generic_import_page(
+            request=request,
+            user=user,
+            title=title,
+            submit_url=submit_url,
+            hint=hint,
+            form=form_state,
+            error=str(exc),
+            ok=None,
+            dialog_output=dialog_output,
+        )
     except Exception as exc:
+        logger.exception("Непредвиденная ошибка обработки импорта '%s': file=%s", job_type, safe_name)
         dialog_output = traceback.format_exc()
         job.status = "error"
         job.details = json.dumps({"error": str(exc), "traceback": dialog_output[-12000:]}, ensure_ascii=False)
@@ -350,7 +423,11 @@ def get_subject_scores_from_db() -> list[dict[str, Any]]:
     default_ids = [item["subject_id"] for item in defaults]
     try:
         import psycopg2
+    except ImportError:
+        logger.warning("psycopg2 не установлен, используются значения порогов ЕГЭ по умолчанию.")
+        return defaults
 
+    try:
         db_cfg = get_load_db_config()
         with psycopg2.connect(**db_cfg) as conn:
             with conn.cursor() as cur:
@@ -394,7 +471,8 @@ def get_subject_scores_from_db() -> list[dict[str, Any]]:
                 }
             )
         return result
-    except Exception:
+    except (ValueError, OSError, psycopg2.Error) as exc:
+        logger.warning("Не удалось получить пороги ЕГЭ из БД, используются значения по умолчанию: %s", exc)
         return defaults
 
 
@@ -419,6 +497,10 @@ templates_env = Environment(
 
 
 def render(template_name: str, context: dict[str, Any]) -> HTMLResponse:
+    context = dict(context)
+    request = context.get("request")
+    if isinstance(request, Request):
+        context.setdefault("csrf_token", get_csrf_token(request))
     tpl = templates_env.get_template(template_name)
     html = tpl.render(**context)
     return HTMLResponse(html)

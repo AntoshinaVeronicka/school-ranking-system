@@ -2,6 +2,7 @@
 {% block content %}
 <h1>Вход</h1>
 <form method="post" action="/login" class="card">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <label>Логин
     <input name="login" required>
   </label>

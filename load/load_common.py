@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Общие утилиты для загрузчиков:
-- нормализация строк и названий школ;
-- выбор файла (по умолчанию с рабочего стола);
-- разрешение путей к файлу;
-- загрузка .env и получение конфигурации БД.
+????? ??????? ??? ??????????? ??????.
+
+???????? ???????????? ?????, ?????????? ?????/?????? Excel
+? ????????? ???????????? ??????????? ? PostgreSQL.
 """
 
 from __future__ import annotations
@@ -16,8 +15,29 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 try:
     from dotenv import load_dotenv
-except Exception:
+except ImportError:
     load_dotenv = None  # type: ignore
+
+try:
+    from psycopg2 import sql as pg_sql
+except ImportError:
+    pg_sql = None  # type: ignore
+
+
+TABLE_EMPTY_ALLOWED = frozenset(
+    {
+        "edu.institute",
+        "edu.ege_subject",
+    }
+)
+
+
+def _validate_full_table_name(full_name: str) -> tuple[str, str]:
+    if full_name not in TABLE_EMPTY_ALLOWED:
+        allowed = ", ".join(sorted(TABLE_EMPTY_ALLOWED))
+        raise ValueError(f"Недопустимое имя таблицы '{full_name}'. Разрешено: {allowed}")
+    schema, table = full_name.split(".", 1)
+    return schema, table
 
 
 def norm_spaces(s: Any) -> str:
@@ -78,6 +98,7 @@ _DASHES_RE = re.compile(r"[–—]")                                # –/— ->
 _GLUE_RE = re.compile(r"(?<=[а-яё])(?=[А-ЯЁ])")                 # "...краяМБОУ..." -> "...края МБОУ..."
 _DOT_NO_SPACE_RE = re.compile(r"(?<=[A-Za-zА-Яа-яЁё])\.(?=[A-Za-zА-Яа-яЁё])")  # "г.Х" -> "г. Х"
 _EXCEL_REF_TAIL_RE = re.compile(r"\s*\+\s*[A-ZА-Я]+\s*\d+\s*$", flags=re.IGNORECASE)  # "+B116" в конце
+_OGO_ENDING_RE = re.compile(r"\b([A-ZА-Я0-9-]+)ОГО\b")
 
 # -------------------- Опечатки (дополняй по мере встречаемости) --------------------
 
@@ -232,8 +253,13 @@ def standardize_school_name(name: str) -> str:
     return _norm_spaces(s).strip(" ,;.")
 
 
+def _normalize_school_case_endings(s: str) -> str:
+    return _OGO_ENDING_RE.sub(r"\1ИЙ", s)
+
+
 def make_school_key(name: str) -> str:
     s = standardize_school_name(name)
+    s = _normalize_school_case_endings(s)
     return re.sub(r"[^0-9A-ZА-Я]+", "", s)
 
 
@@ -353,8 +379,10 @@ def get_db_config(search_from: Optional[Path] = None) -> Dict[str, Any]:
 
 
 def table_is_empty(cur, full_name: str) -> bool:
-    # full_name передаем только из trusted-кода (например, "edu.table").
-    cur.execute(f"SELECT COUNT(*) FROM {full_name}")
+    schema, table = _validate_full_table_name(full_name)
+    if pg_sql is None:
+        raise RuntimeError("psycopg2 недоступен: невозможно безопасно сформировать SQL для имени таблицы.")
+    cur.execute(pg_sql.SQL("SELECT COUNT(*) FROM {}.{}").format(pg_sql.Identifier(schema), pg_sql.Identifier(table)))
     return int(cur.fetchone()[0]) == 0
 
 

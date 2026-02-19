@@ -125,3 +125,4 @@ python load\setup_search_school_optimization.py
   - HTML-запросы -> редирект на `/login`
   - API-запросы -> `401`
 - Runtime-файлы уже исключены из git через `.gitignore` (`.env`, `.venv`, `uploads`, `app.db`).
+- Рекомендуется использовать один виртуальный env в корне проекта (`.venv`) и не создавать вложенные env внутри `dvfu_prof_webapp/`.

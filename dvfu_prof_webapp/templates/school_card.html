@@ -19,6 +19,119 @@
   </div>
 
   <div class="card">
+    <h2>Предметная аналитика ЕГЭ</h2>
+    {% if subject_heatmap_rows %}
+      <p class="muted">
+        Метрики в колонках усреднены по {{ subject_heatmap_period if subject_heatmap_period else "всем данным факта" }}.
+      </p>
+      <div class="subject-table-wrap">
+        <table class="table subject-heatmap-table">
+          <thead>
+            <tr>
+              <th>Предмет</th>
+              <th>Средний балл</th>
+              <th>Участники</th>
+              <th>% не преодолели</th>
+              <th>% 80+</th>
+              <th>% 100</th>
+              <th>Светофор порогов</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for row in subject_heatmap_rows %}
+            <tr>
+              <td>{{ row.subject_name }}</td>
+              <td class="heat-cell" style="background-color: {{ row.avg_score_heat }};">
+                {{ row.avg_score if row.avg_score is not none else "—" }}
+              </td>
+              <td class="heat-cell" style="background-color: {{ row.participants_heat }};">
+                {{ row.participants_cnt if row.participants_cnt is not none else "—" }}
+              </td>
+              <td class="heat-cell" style="background-color: {{ row.not_passed_heat }};">
+                {{ (row.not_passed_pct ~ "%") if row.not_passed_pct is not none else "—" }}
+              </td>
+              <td class="heat-cell" style="background-color: {{ row.high_80_99_heat }};">
+                {{ (row.high_80_99_pct ~ "%") if row.high_80_99_pct is not none else "—" }}
+              </td>
+              <td class="heat-cell" style="background-color: {{ row.score_100_heat }};">
+                {{ (row.score_100_pct ~ "%") if row.score_100_pct is not none else "—" }}
+              </td>
+              <td class="threshold-cell">
+                {% if row.avg_score is not none and row.min_passing_score is not none %}
+                  <div class="threshold-meter threshold-{{ row.threshold_status }}">
+                    <span class="threshold-value" style="width: {{ row.avg_score_pos }}%;"></span>
+                    <span class="threshold-marker" style="left: {{ row.min_score_pos }}%;"></span>
+                  </div>
+                  <div class="threshold-note">
+                    средний балл {{ row.avg_score }} / порог {{ row.min_passing_score }}
+                    {% if row.threshold_delta is not none %}
+                      ({{ "+" if row.threshold_delta > 0 else "" }}{{ row.threshold_delta }})
+                    {% endif %}
+                  </div>
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {% if subject_histogram_rows %}
+        <h3>Сравнение по предметам</h3>
+        <p class="muted subject-compare-meta">
+          {% if subject_histogram_latest_year and subject_histogram_prev_year %}
+            Показан последний фактический год {{ subject_histogram_latest_year }} и изменение к {{ subject_histogram_prev_year }}.
+          {% elif subject_histogram_latest_year %}
+            Показан последний фактический год {{ subject_histogram_latest_year }}.
+          {% endif %}
+        </p>
+        <div class="subject-table-wrap">
+          <table class="table subject-compare-table">
+            <colgroup>
+              <col class="subject-compare-col-subject">
+              <col class="subject-compare-col-bar">
+              <col class="subject-compare-col-value">
+              <col class="subject-compare-col-delta">
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Предмет</th>
+                <th>Средний балл</th>
+                <th>Значение</th>
+                <th>Δ к предыдущему году</th>
+              </tr>
+            </thead>
+            <tbody>
+            {% for row in subject_histogram_rows %}
+              <tr>
+                <td class="hist-label">{{ row.subject_name }}</td>
+                <td>
+                  <div class="hist-bar-wrap">
+                    <div class="hist-bar" style="width: {{ row.bar_width }}%; background: {{ row.bar_gradient }};"></div>
+                  </div>
+                </td>
+                <td class="hist-score">{{ row.latest_score if row.latest_score is not none else "—" }}</td>
+                <td class="hist-delta hist-{{ row.delta_status }}">
+                  {% if row.delta is not none %}
+                    {{ "+" if row.delta > 0 else "" }}{{ row.delta }}
+                  {% else %}
+                    нет сравнения
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% endif %}
+    {% else %}
+      <p class="muted">Недостаточно данных ЕГЭ для предметной аналитики.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
     <h2>Внешние ключи</h2>
     {% if external_keys %}
       <table class="table">

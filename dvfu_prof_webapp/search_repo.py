@@ -11,8 +11,13 @@ from psycopg2.extras import RealDictCursor
 
 try:
     from dotenv import load_dotenv
-except Exception:
+except ImportError:
     load_dotenv = None  # type: ignore
+
+try:
+    from .filter_options_repo import fetch_common_filter_options
+except ImportError:
+    from filter_options_repo import fetch_common_filter_options
 
 
 _SPACE_RE = re.compile(r"\s+")
@@ -137,43 +142,7 @@ def fetch_filter_options(region_id: int | None = None) -> dict[str, list[dict[st
     cfg = _get_pg_config()
     with psycopg2.connect(**cfg) as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT region_id, name FROM edu.region ORDER BY name")
-            regions = [dict(r) for r in cur.fetchall()]
-
-            if region_id is None:
-                municipalities: list[dict[str, Any]] = []
-            else:
-                cur.execute(
-                    """
-                    SELECT municipality_id, name
-                    FROM edu.municipality
-                    WHERE region_id = %s
-                    ORDER BY name
-                    """,
-                    (region_id,),
-                )
-                municipalities = [dict(r) for r in cur.fetchall()]
-
-            cur.execute("SELECT profile_id, name FROM edu.school_profile ORDER BY name")
-            profiles = [dict(r) for r in cur.fetchall()]
-
-            cur.execute('SELECT DISTINCT "year" FROM edu.ege_school_year ORDER BY "year" DESC')
-            years = [dict(r) for r in cur.fetchall()]
-
-            cur.execute("SELECT DISTINCT kind::text AS kind FROM edu.ege_school_year ORDER BY kind::text")
-            kinds = [dict(r) for r in cur.fetchall()]
-
-            cur.execute("SELECT subject_id, name FROM edu.ege_subject ORDER BY name")
-            subjects = [dict(r) for r in cur.fetchall()]
-
-    return {
-        "regions": regions,
-        "municipalities": municipalities,
-        "profiles": profiles,
-        "years": years,
-        "kinds": kinds,
-        "subjects": subjects,
-    }
+            return fetch_common_filter_options(cur, region_id=region_id, include_subject_min_score=False)
 
 
 def fetch_municipalities(region_id: int) -> list[dict[str, Any]]:
@@ -367,6 +336,7 @@ def fetch_school_card(school_id: int) -> dict[str, Any] | None:
                     y.graduates_total,
                     subj.subject_id,
                     subj.name AS subject_name,
+                    subj.min_passing_score,
                     ss.participants_cnt,
                     ss.not_passed_cnt,
                     ss.high_80_99_cnt,
@@ -421,6 +391,7 @@ def fetch_school_card(school_id: int) -> dict[str, Any] | None:
             {
                 "subject_id": int(row["subject_id"]),
                 "subject_name": str(row["subject_name"]),
+                "min_passing_score": row["min_passing_score"],
                 "participants_cnt": participants_cnt,
                 "not_passed_cnt": not_passed_cnt,
                 "high_80_99_cnt": high_80_99_cnt,

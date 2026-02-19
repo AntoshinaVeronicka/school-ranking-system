@@ -59,6 +59,7 @@
   </div>
 
   <form method="post" action="/reports/generate" class="card search-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="run_id" value="{{ selected_run.run_id }}">
 
     <div class="search-grid">

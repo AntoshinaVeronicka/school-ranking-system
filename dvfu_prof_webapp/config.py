@@ -5,7 +5,19 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-APP_NAME = "DVFU - Профориентация и анализ школ"
+DEFAULT_SEARCH_PER_PAGE = 20
+MIN_SEARCH_PER_PAGE = 5
+MAX_SEARCH_PER_PAGE = 200
+
+DEFAULT_RATING_W_GRADUATES = 0.25
+DEFAULT_RATING_W_AVG_SCORE = 0.45
+DEFAULT_RATING_W_MATCH_SHARE = 0.20
+DEFAULT_RATING_W_THRESHOLD_SHARE = 0.10
+DEFAULT_RATING_LIMIT = 300
+MIN_RATING_LIMIT = 10
+MAX_RATING_LIMIT = 2000
+
+APP_NAME = "Анализ школ ДФО"
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent

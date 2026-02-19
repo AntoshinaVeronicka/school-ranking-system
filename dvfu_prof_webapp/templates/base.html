@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ title if title else "DVFU" }}</title>
+  <title>{{ title if title else "Анализ школ ДФО" }}</title>
   <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
   <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
@@ -13,11 +13,14 @@
 <body>
   <header class="header">
     <div class="container header-row">
-      <div class="brand">DVFU – Анализ школ</div>
+      <div class="brand">Анализ школ ДФО</div>
       <div class="header-actions">
         {% if user %}
           <span class="muted">Пользователь: {{ user.login }}{% if user.is_admin %} (администратор){% endif %}</span>
-          <a class="btn btn-ghost" href="/logout">Выйти</a>
+          <form method="post" action="/logout" style="margin:0;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="btn btn-ghost" type="submit">Выйти</button>
+          </form>
         {% endif %}
       </div>
     </div>

@@ -9,8 +9,20 @@ import psycopg2
 from psycopg2.extras import Json, RealDictCursor, execute_values
 
 try:
+    from .config import (
+        DEFAULT_RATING_W_AVG_SCORE,
+        DEFAULT_RATING_W_GRADUATES,
+        DEFAULT_RATING_W_MATCH_SHARE,
+        DEFAULT_RATING_W_THRESHOLD_SHARE,
+    )
     from .search_repo import _get_pg_config
 except ImportError:
+    from config import (
+        DEFAULT_RATING_W_AVG_SCORE,
+        DEFAULT_RATING_W_GRADUATES,
+        DEFAULT_RATING_W_MATCH_SHARE,
+        DEFAULT_RATING_W_THRESHOLD_SHARE,
+    )
     from search_repo import _get_pg_config
 
 
@@ -32,13 +44,13 @@ METRIC_DEFS = {
         "name_ru": "Средний балл ЕГЭ",
         "category": "ege",
         "unit": "балл",
-        "description": "Средний балл ЕГЭ по всем предметам",
+        "description": "Средний балл ЕГЭ (по всем или релевантным предметам, в зависимости от фильтров)",
     },
     "match_share": {
-        "name_ru": "Соответствие программам",
+        "name_ru": "Потенциальные абитуриенты (норм.)",
         "category": "ege",
         "unit": "доля",
-        "description": "Доля программ, для которых школа удовлетворяет набору предметов",
+        "description": "Нормированное среднее количество потенциальных абитуриентов по выбранным программам",
     },
     "threshold_share": {
         "name_ru": "Прохождение порогов ЕГЭ",
@@ -130,18 +142,18 @@ def _guess_year_basis(filters: dict[str, Any], rows: list[dict[str, Any]]) -> in
 
 def _normalize_weights(weights: dict[str, Any]) -> dict[str, float]:
     raw = {
-        "avg_graduates": max(0.0, _to_float(weights.get("w_graduates"), 0.25)),
-        "avg_score_all": max(0.0, _to_float(weights.get("w_avg_score"), 0.45)),
-        "match_share": max(0.0, _to_float(weights.get("w_match_share"), 0.20)),
-        "threshold_share": max(0.0, _to_float(weights.get("w_threshold_share"), 0.10)),
+        "avg_graduates": max(0.0, _to_float(weights.get("w_graduates"), DEFAULT_RATING_W_GRADUATES)),
+        "avg_score_all": max(0.0, _to_float(weights.get("w_avg_score"), DEFAULT_RATING_W_AVG_SCORE)),
+        "match_share": max(0.0, _to_float(weights.get("w_match_share"), DEFAULT_RATING_W_MATCH_SHARE)),
+        "threshold_share": max(0.0, _to_float(weights.get("w_threshold_share"), DEFAULT_RATING_W_THRESHOLD_SHARE)),
     }
     total = sum(raw.values())
     if total <= 0:
         return {
-            "avg_graduates": 0.25,
-            "avg_score_all": 0.45,
-            "match_share": 0.20,
-            "threshold_share": 0.10,
+            "avg_graduates": DEFAULT_RATING_W_GRADUATES,
+            "avg_score_all": DEFAULT_RATING_W_AVG_SCORE,
+            "match_share": DEFAULT_RATING_W_MATCH_SHARE,
+            "threshold_share": DEFAULT_RATING_W_THRESHOLD_SHARE,
         }
     return {k: v / total for k, v in raw.items()}
 
@@ -394,6 +406,11 @@ def save_rating_run(
             "limit": _to_int(filters.get("limit")),
         }
     )
+    use_avg_score_for_rating = bool(
+        _normalize_int_list(filters.get("subject_ids"))
+        or _normalize_int_list(filters.get("institute_ids"))
+        or _normalize_int_list(filters.get("program_ids"))
+    )
 
     with psycopg2.connect(**cfg) as conn:
         with conn.cursor() as cur:
@@ -472,6 +489,8 @@ def save_rating_run(
                 rating_score = _to_float(row.get("rating_score"), 0.0)
                 avg_graduates = _to_float(row.get("avg_graduates"), 0.0)
                 avg_score_all = _to_float(row.get("avg_score_all"), 0.0)
+                avg_score_for_rating = _to_float(row.get("avg_score_for_rating"), avg_score_all)
+                avg_score_metric_raw = avg_score_for_rating if use_avg_score_for_rating else avg_score_all
                 match_share = _to_float(row.get("match_share"), 0.0)
                 threshold_share = _to_float(row.get("threshold_share"), 0.0)
                 norm_graduates = _to_float(row.get("norm_graduates"), 0.0)
@@ -479,7 +498,7 @@ def save_rating_run(
 
                 metric_payload = {
                     "avg_graduates": {"raw": avg_graduates, "norm": norm_graduates},
-                    "avg_score_all": {"raw": avg_score_all, "norm": norm_avg_score},
+                    "avg_score_all": {"raw": avg_score_metric_raw, "norm": norm_avg_score},
                     "match_share": {"raw": match_share, "norm": match_share},
                     "threshold_share": {"raw": threshold_share, "norm": threshold_share},
                 }
@@ -507,7 +526,7 @@ def save_rating_run(
                         _num_10_6(rating_score) or 0.0,
                         year_basis,
                         _to_int(round(avg_graduates)),
-                        _num_5_2(avg_score_all),
+                        _num_5_2(avg_score_metric_raw),
                     )
                 )
 
@@ -531,6 +550,8 @@ def save_rating_run(
                                 {
                                     "avg_graduates": _num_5_2(avg_graduates),
                                     "avg_score_all": _num_5_2(avg_score_all),
+                                    "avg_score_for_rating": _num_5_2(avg_score_for_rating),
+                                    "avg_score_metric": _num_5_2(avg_score_metric_raw),
                                     "ege_years": _to_int(row.get("ege_years")),
                                     "last_year": _to_int(row.get("last_year")),
                                 }

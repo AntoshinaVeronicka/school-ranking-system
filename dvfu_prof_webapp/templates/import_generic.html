@@ -3,6 +3,7 @@
 <h1>{{ title }}</h1>
 
 <form method="post" action="{{ submit_url }}" enctype="multipart/form-data" class="card">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <div class="row">
     <label class="grow">Регион (опционально)
       <input name="region" placeholder="Например: Приморский край" value="{{ form.region }}">

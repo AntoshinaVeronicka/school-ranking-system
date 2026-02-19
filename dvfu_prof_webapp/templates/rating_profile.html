@@ -3,6 +3,7 @@
 <h1>Подбор и рейтинг школ</h1>
 
 <form method="get" action="/rating/profile" class="card search-form rating-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <div class="search-grid rating-grid">
     <label class="field field-q">Название школы (поиск по вхождению)
       <input name="q" value="{{ filters.q }}" placeholder="Например: лицей №23">
@@ -183,7 +184,7 @@
       <input type="number" name="w_avg_score" min="0" step="0.01" value="{{ filters.w_avg_score }}">
     </label>
 
-    <label class="field">Вес: соответствие программам
+    <label class="field">Вес: потенциальные абитуриенты
       <input type="number" name="w_match_share" min="0" step="0.01" value="{{ filters.w_match_share }}">
     </label>
 
@@ -219,24 +220,33 @@
     >
       Балл по предметам
     </button>
+    <button
+      type="button"
+      class="hint-pill"
+      data-tip="«Потенциальные абитуриенты» считаются по каждой подходящей программе как минимальная предметная емкость школы: для обязательных предметов берется минимум, для выборных групп — минимум из максимумов по группе; в таблицу идет среднее по таким программам. Пример: обязательные — русский 80 и математика 60, выборная группа — физика 40 или информатика 50, тогда по программе потенциал = min(60, 50) = 50."
+    >
+      Потенциальные абитуриенты
+    </button>
   </div>
 
   <details class="rating-formula">
     <summary>Как рассчитывается итоговый рейтинг</summary>
     <p class="muted">
-      Итоговый рейтинг складывается из 4 частей: выпускники, средний балл ЕГЭ, соответствие программам и выполнение порогов ЕГЭ.
+      Итоговый рейтинг складывается из 4 частей: выпускники, средний балл ЕГЭ, потенциальные абитуриенты и выполнение порогов ЕГЭ.
     </p>
     <p class="muted">
       Вы сами задаете веса этих частей. Система автоматически приводит их к сумме 1, чтобы оценка считалась корректно.
     </p>
     <p class="formula-code">
-      rating_score = w_g * norm(avg_graduates) + w_a * norm(avg_score_all) + w_m * match_share + w_t * threshold_share
+      rating_score = w_g * norm(avg_graduates) + w_a * norm(avg_score_for_rating) + w_p * norm(potential_applicants_avg) + w_t * threshold_share
     </p>
     <p class="muted formula-note">
       Простыми словами: каждый показатель переводится в шкалу от 0 до 1, умножается на свой вес, и затем все части суммируются.
       <br>
       norm(x) = x / max(x) означает: значение школы делится на лучший результат среди школ в текущей выборке.
-      match_share и threshold_share уже лежат в диапазоне от 0 до 1.
+      avg_score_for_rating = avg_score_all без предметно-программных фильтров, иначе используется средний балл по релевантным предметам.
+      <br>
+      threshold_share уже лежит в диапазоне от 0 до 1.
     </p>
   </details>
 
@@ -294,6 +304,22 @@
     </div>
 
     {% if ranked %}
+      <div class="rating-viz-grid">
+        <section class="rating-viz-card">
+          <div class="results-head rating-viz-head">
+            <h3>Состав рейтинга (топ-10)</h3>
+            <p class="muted">Вклад 4 компонентов в <code>rating_score</code> для каждой школы.</p>
+          </div>
+          <div id="ratingStackedChart" class="rating-stacked-chart"></div>
+          <div class="rating-stacked-legend">
+            <span class="legend-chip"><span class="legend-dot legend-dot-graduates"></span>Выпускники</span>
+            <span class="legend-chip"><span class="legend-dot legend-dot-avg"></span>Средний балл</span>
+            <span class="legend-chip"><span class="legend-dot legend-dot-potential"></span>Потенциальные абитуриенты</span>
+            <span class="legend-chip"><span class="legend-dot legend-dot-threshold"></span>Пороги</span>
+          </div>
+        </section>
+      </div>
+
       <div class="table-wrap">
         <table class="table table-clickable rating-results-table">
           <thead>
@@ -308,7 +334,9 @@
               {% if show_admission_subject_avg %}
                 <th>Средний балл ЕГЭ по предметам</th>
               {% endif %}
-              <th>Соответствие программам</th>
+              {% if show_potential_applicants %}
+                <th>Потенциальные абитуриенты</th>
+              {% endif %}
               <th>Итоговый рейтинг</th>
               <th></th>
             </tr>
@@ -326,7 +354,9 @@
                 {% if show_admission_subject_avg %}
                   <td>{{ r.admission_subject_avg if r.admission_subject_avg is not none else "—" }}</td>
                 {% endif %}
-                <td>{{ (r.match_share * 100)|round(1) }}%</td>
+                {% if show_potential_applicants %}
+                  <td>{{ r.potential_applicants_avg if r.potential_applicants_avg is not none else "—" }}</td>
+                {% endif %}
                 <td>{{ r.rating_score }}</td>
                 <td>
                   <a class="btn btn-small" href="/search/school/{{ r.school_id }}?src=rating{% if current_query %}&{{ current_query }}{% endif %}" onclick="event.stopPropagation();">Карточка</a>
@@ -350,6 +380,146 @@
   const regionSelect = document.getElementById("rating_region_id");
   const municipalitySelect = document.getElementById("rating_municipality_id");
   const programsOptionsNode = document.getElementById("program_picker_options");
+  const ratingStackedRows = {{ rating_chart_stacked | tojson }};
+  let stackedTooltipNode = null;
+
+  function formatNumber(value, digits = 2) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return "—";
+    return num.toFixed(digits);
+  }
+
+  function getStackedTooltipNode() {
+    if (stackedTooltipNode && document.body.contains(stackedTooltipNode)) {
+      return stackedTooltipNode;
+    }
+    stackedTooltipNode = document.createElement("div");
+    stackedTooltipNode.className = "stacked-tooltip";
+    document.body.appendChild(stackedTooltipNode);
+    return stackedTooltipNode;
+  }
+
+  function hideStackedTooltip() {
+    if (!stackedTooltipNode) return;
+    stackedTooltipNode.classList.remove("visible");
+  }
+
+  function placeStackedTooltip(clientX, clientY) {
+    const tooltip = stackedTooltipNode;
+    if (!tooltip) return;
+    const pad = 10;
+    const offset = 14;
+    const tooltipWidth = tooltip.offsetWidth || 0;
+    const tooltipHeight = tooltip.offsetHeight || 0;
+
+    let left = clientX + offset;
+    let top = clientY - tooltipHeight - offset;
+
+    if (left + tooltipWidth + pad > window.innerWidth) {
+      left = window.innerWidth - tooltipWidth - pad;
+    }
+    if (left < pad) {
+      left = pad;
+    }
+    if (top < pad) {
+      top = clientY + offset;
+    }
+    if (top + tooltipHeight + pad > window.innerHeight) {
+      top = window.innerHeight - tooltipHeight - pad;
+    }
+
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+  }
+
+  function showStackedTooltip(clientX, clientY, text) {
+    const tooltip = getStackedTooltipNode();
+    tooltip.textContent = text;
+    tooltip.classList.add("visible");
+    placeStackedTooltip(clientX, clientY);
+  }
+
+  function renderStackedChart() {
+    const root = document.getElementById("ratingStackedChart");
+    if (!root) return;
+    hideStackedTooltip();
+    root.innerHTML = "";
+
+    if (!Array.isArray(ratingStackedRows) || ratingStackedRows.length === 0) {
+      const msg = document.createElement("p");
+      msg.className = "muted";
+      msg.textContent = "Недостаточно данных для графика состава рейтинга.";
+      root.appendChild(msg);
+      return;
+    }
+
+    const maxScore = Math.max(
+      0.000001,
+      ...ratingStackedRows.map((row) => Number(row.score_total) || 0)
+    );
+    const segments = [
+      { key: "score_part_graduates", className: "stacked-graduates", label: "Выпускники" },
+      { key: "score_part_avg_score", className: "stacked-avg", label: "Средний балл" },
+      { key: "score_part_potential", className: "stacked-potential", label: "Потенциальные абитуриенты" },
+      { key: "score_part_threshold", className: "stacked-threshold", label: "Пороги" },
+    ];
+
+    ratingStackedRows.forEach((row) => {
+      const line = document.createElement("div");
+      line.className = "stacked-row";
+
+      const label = document.createElement("div");
+      label.className = "stacked-label";
+      label.textContent = `#${row.rank_pos} ${row.name || ""}`;
+      line.appendChild(label);
+
+      const track = document.createElement("div");
+      track.className = "stacked-track";
+      const titleParts = [];
+      segments.forEach((segment) => {
+        const value = Number(row[segment.key]) || 0;
+        const total = Math.max(0, Number(row.score_total) || 0);
+        const sharePct = total > 0 ? (value / total) * 100 : 0;
+        const width = (value / maxScore) * 100;
+        titleParts.push(`${segment.label}: ${formatNumber(value, 4)}`);
+        if (width <= 0) return;
+        const part = document.createElement("span");
+        part.className = `stacked-segment ${segment.className}`;
+        part.style.width = `${width}%`;
+        const tooltipText = `${segment.label}: ${formatNumber(value, 4)} (${formatNumber(sharePct, 1)}%)`;
+        part.setAttribute("aria-label", tooltipText);
+        part.tabIndex = 0;
+        part.addEventListener("mouseenter", (event) => {
+          showStackedTooltip(event.clientX, event.clientY, tooltipText);
+        });
+        part.addEventListener("mousemove", (event) => {
+          placeStackedTooltip(event.clientX, event.clientY);
+        });
+        part.addEventListener("mouseleave", () => {
+          hideStackedTooltip();
+        });
+        part.addEventListener("focus", (event) => {
+          const target = event.currentTarget;
+          if (!(target instanceof HTMLElement)) return;
+          const rect = target.getBoundingClientRect();
+          showStackedTooltip(rect.left + (rect.width / 2), rect.top, tooltipText);
+        });
+        part.addEventListener("blur", () => {
+          hideStackedTooltip();
+        });
+        track.appendChild(part);
+      });
+      track.title = titleParts.join("\n");
+      line.appendChild(track);
+
+      const score = document.createElement("div");
+      score.className = "stacked-score";
+      score.textContent = formatNumber(row.score_total, 4);
+      line.appendChild(score);
+
+      root.appendChild(line);
+    });
+  }
 
   function initMultiDropdown(root) {
     const toggle = root.querySelector("[data-role='toggle']");
@@ -484,6 +654,9 @@
   });
 
   initAllDropdowns();
+  renderStackedChart();
+
+  window.addEventListener("scroll", hideStackedTooltip, { passive: true });
 
   document.querySelectorAll("tr[data-href]").forEach((row) => {
     row.addEventListener("click", () => {

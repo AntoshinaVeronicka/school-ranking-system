@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import traceback
 from dataclasses import dataclass
 from datetime import datetime
@@ -26,7 +27,21 @@ try:
         save_rating_run,
         save_search_request,
     )
-    from .config import LOAD_PROGRAMS_SCRIPT, LOAD_SCHOOLS_SCRIPT, UPLOAD_DIR
+    from .config import (
+        DEFAULT_RATING_LIMIT,
+        DEFAULT_RATING_W_AVG_SCORE,
+        DEFAULT_RATING_W_GRADUATES,
+        DEFAULT_RATING_W_MATCH_SHARE,
+        DEFAULT_RATING_W_THRESHOLD_SHARE,
+        DEFAULT_SEARCH_PER_PAGE,
+        LOAD_PROGRAMS_SCRIPT,
+        LOAD_SCHOOLS_SCRIPT,
+        MAX_RATING_LIMIT,
+        MAX_SEARCH_PER_PAGE,
+        MIN_RATING_LIMIT,
+        MIN_SEARCH_PER_PAGE,
+        UPLOAD_DIR,
+    )
     from .db import ImportJob, User, get_db
     from .rating_repo import (
         RatingFilters,
@@ -62,8 +77,10 @@ try:
         resolve_sheet_name,
         run_ege_loader_script,
         run_script_with_output,
+        validate_csrf_token,
         verify_password,
     )
+    from .subject_analytics_service import build_subject_analytics
 except ImportError:
     from analytics_repo import (
         create_reports_for_run,
@@ -76,7 +93,21 @@ except ImportError:
         save_rating_run,
         save_search_request,
     )
-    from config import LOAD_PROGRAMS_SCRIPT, LOAD_SCHOOLS_SCRIPT, UPLOAD_DIR
+    from config import (
+        DEFAULT_RATING_LIMIT,
+        DEFAULT_RATING_W_AVG_SCORE,
+        DEFAULT_RATING_W_GRADUATES,
+        DEFAULT_RATING_W_MATCH_SHARE,
+        DEFAULT_RATING_W_THRESHOLD_SHARE,
+        DEFAULT_SEARCH_PER_PAGE,
+        LOAD_PROGRAMS_SCRIPT,
+        LOAD_SCHOOLS_SCRIPT,
+        MAX_RATING_LIMIT,
+        MAX_SEARCH_PER_PAGE,
+        MIN_RATING_LIMIT,
+        MIN_SEARCH_PER_PAGE,
+        UPLOAD_DIR,
+    )
     from db import ImportJob, User, get_db
     from rating_repo import (
         RatingFilters,
@@ -112,10 +143,13 @@ except ImportError:
         resolve_sheet_name,
         run_ege_loader_script,
         run_script_with_output,
+        validate_csrf_token,
         verify_password,
     )
+    from subject_analytics_service import build_subject_analytics
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 SEARCH_QUERY_KEYS = {
     "q",
@@ -170,8 +204,10 @@ def login_action(
     request: Request,
     login: str = Form(...),
     password: str = Form(...),
+    csrf_token: str = Form(""),
     db: Session = Depends(get_db),
 ):
+    validate_csrf_token(request, csrf_token)
     user = db.query(User).filter(User.login == login).one_or_none()
     if user is None or not verify_password(password, user.password_hash):
         return render("login.html", {"request": request, "user": None, "error": "Неверный логин или пароль."})
@@ -186,13 +222,15 @@ def recovery_page(request: Request):
 
 
 @router.post("/recovery")
-def recovery_action(request: Request, login: str = Form(...)):
+def recovery_action(request: Request, login: str = Form(...), csrf_token: str = Form("")):
+    validate_csrf_token(request, csrf_token)
     info = f"Запрос на восстановление для пользователя «{login}» зарегистрирован (демо-режим)."
     return render("recovery.html", {"request": request, "user": None, "info": info})
 
 
-@router.get("/logout")
-def logout(request: Request):
+@router.post("/logout")
+def logout(request: Request, csrf_token: str = Form("")):
+    validate_csrf_token(request, csrf_token)
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
 
@@ -228,10 +266,12 @@ def import_ege_action(
     sheet: str = Form(""),
     year: str = Form(""),
     dry_run: str | None = Form(None),
+    csrf_token: str = Form(""),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
     user = require_user(request, db)
+    validate_csrf_token(request, csrf_token)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
     form_state = {
@@ -330,7 +370,25 @@ def import_ege_action(
                 "form": form_state,
             },
         )
+    except (ValueError, RuntimeError, OSError, PermissionError) as exc:
+        logger.warning("Ошибка импорта ЕГЭ: file=%s, year=%s, kind=%s, err=%s", safe_name, year, kind_value, exc)
+        dialog_output = traceback.format_exc()
+        job.status = "error"
+        job.details = json.dumps({"error": str(exc), "traceback": dialog_output[-12000:]}, ensure_ascii=False)
+        db.commit()
+        return render(
+            "import_ege.html",
+            {
+                "request": request,
+                "user": user,
+                "error": str(exc),
+                "ok": None,
+                "dialog_output": dialog_output,
+                "form": form_state,
+            },
+        )
     except Exception as exc:
+        logger.exception("Непредвиденная ошибка импорта ЕГЭ: file=%s", safe_name)
         dialog_output = traceback.format_exc()
         job.status = "error"
         job.details = json.dumps({"error": str(exc), "traceback": dialog_output[-12000:]}, ensure_ascii=False)
@@ -371,10 +429,12 @@ def import_admissions_action(
     sheet: str = Form(""),
     year: str = Form(""),
     dry_run: str | None = Form(None),
+    csrf_token: str = Form(""),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
     user = require_user(request, db)
+    validate_csrf_token(request, csrf_token)
     return process_generic_import_upload(
         request=request,
         user=user,
@@ -415,10 +475,12 @@ def import_events_action(
     sheet: str = Form(""),
     year: str = Form(""),
     dry_run: str | None = Form(None),
+    csrf_token: str = Form(""),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
     user = require_user(request, db)
+    validate_csrf_token(request, csrf_token)
     return process_generic_import_upload(
         request=request,
         user=user,
@@ -463,10 +525,12 @@ def directories_load_action(
     sheet: str = Form(""),
     dry_run: str | None = Form(None),
     create_missing_subjects: str | None = Form(None),
+    csrf_token: str = Form(""),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
     user = require_user(request, db)
+    validate_csrf_token(request, csrf_token)
     directories_upload_dir = UPLOAD_DIR / "directories"
     directories_upload_dir.mkdir(parents=True, exist_ok=True)
 
@@ -571,7 +635,29 @@ def directories_load_action(
                 "scores_output": None,
             },
         )
+    except (ValueError, RuntimeError, OSError, PermissionError) as exc:
+        logger.warning("Ошибка загрузки справочников: loader=%s, file=%s, err=%s", loader_type, safe_name, exc)
+        loader_output = traceback.format_exc()
+        job.status = "error"
+        job.details = json.dumps({"error": str(exc), "traceback": loader_output[-12000:]}, ensure_ascii=False)
+        db.commit()
+        return render(
+            "directories_import.html",
+            {
+                "request": request,
+                "user": user,
+                "loader_form": form_state,
+                "subject_scores": get_subject_scores_from_db(),
+                "loader_error": str(exc),
+                "loader_ok": None,
+                "loader_output": loader_output,
+                "scores_error": None,
+                "scores_ok": None,
+                "scores_output": None,
+            },
+        )
     except Exception as exc:
+        logger.exception("Непредвиденная ошибка загрузки справочников: loader=%s, file=%s", loader_type, safe_name)
         loader_output = traceback.format_exc()
         job.status = "error"
         job.details = json.dumps({"error": str(exc), "traceback": loader_output[-12000:]}, ensure_ascii=False)
@@ -597,6 +683,7 @@ def directories_load_action(
 async def directories_min_scores_action(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
     submitted = await request.form()
+    validate_csrf_token(request, str(submitted.get("csrf_token", "")))
     submitted_map = {str(k): str(v) for k, v in submitted.items()}
 
     rows = apply_subject_scores_from_form(default_subject_scores(), submitted_map)
@@ -738,7 +825,29 @@ async def directories_min_scores_action(request: Request, db: Session = Depends(
                 "scores_output": score_output,
             },
         )
+    except (ValueError, OSError, RuntimeError, PermissionError) as exc:
+        logger.warning("Ошибка обновления минимальных баллов ЕГЭ: rows=%s, err=%s", len(updates), exc)
+        score_output = traceback.format_exc()
+        job.status = "error"
+        job.details = json.dumps({"error": str(exc), "traceback": score_output[-12000:]}, ensure_ascii=False)
+        db.commit()
+        return render(
+            "directories_import.html",
+            {
+                "request": request,
+                "user": user,
+                "loader_form": default_directories_form(),
+                "subject_scores": rows,
+                "loader_error": None,
+                "loader_ok": None,
+                "loader_output": None,
+                "scores_error": str(exc),
+                "scores_ok": None,
+                "scores_output": score_output,
+            },
+        )
     except Exception as exc:
+        logger.exception("Непредвиденная ошибка обновления минимальных баллов ЕГЭ: rows=%s", len(updates))
         score_output = traceback.format_exc()
         job.status = "error"
         job.details = json.dumps({"error": str(exc), "traceback": score_output[-12000:]}, ensure_ascii=False)
@@ -877,6 +986,21 @@ def _prepare_df_for_excel(df: pd.DataFrame) -> pd.DataFrame:
     return prepared
 
 
+def _excel_response(*, filename: str, sheets: list[tuple[str, pd.DataFrame]]) -> StreamingResponse:
+    out = io.BytesIO()
+    with pd.ExcelWriter(out, engine="openpyxl") as writer:
+        for sheet_name, df in sheets:
+            safe_sheet = (sheet_name or "sheet")[:31]
+            _prepare_df_for_excel(df).to_excel(writer, index=False, sheet_name=safe_sheet)
+    out.seek(0)
+    headers = {"Content-Disposition": f"attachment; filename={filename}"}
+    return StreamingResponse(
+        out,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
+
+
 def _has_known_query_params(request: Request, keys: set[str]) -> bool:
     params = request.query_params
     return any(key in params for key in keys)
@@ -920,7 +1044,12 @@ def _parse_search_request_params(
 
     profile_ids_value = _parse_int_list(profile_ids)
     safe_page = _parse_bounded_int(page, default=1, min_value=1)
-    safe_per_page = _parse_bounded_int(per_page, default=20, min_value=5, max_value=200)
+    safe_per_page = _parse_bounded_int(
+        per_page,
+        default=DEFAULT_SEARCH_PER_PAGE,
+        min_value=MIN_SEARCH_PER_PAGE,
+        max_value=MAX_SEARCH_PER_PAGE,
+    )
 
     return SearchRequestParams(
         q=(q or "").strip(),
@@ -972,7 +1101,7 @@ def search_page(
     subject_ids: list[str] = Query(default=[]),
     subject_id: str | None = Query(default=None),
     page: str | None = Query(default="1"),
-    per_page: str | None = Query(default="20"),
+    per_page: str | None = Query(default=str(DEFAULT_SEARCH_PER_PAGE)),
     save_status: str | None = Query(default=None),
     saved_request_id: str | None = Query(default=None),
     db: Session = Depends(get_db),
@@ -1069,38 +1198,21 @@ def search_page(
 async def search_action(request: Request, db: Session = Depends(get_db)):
     require_user(request, db)
     form = await request.form()
-
-    q = str(form.get("q", "")).strip()
-    region_raw = str(form.get("region_id", "")).strip()
-    municipality_raw = str(form.get("municipality_id", "")).strip()
-    year_raw = str(form.get("year", "")).strip()
-    kind = str(form.get("kind", "")).strip()
-    subject_raw_values = form.getlist("subject_ids")
-    subject_raw_legacy = str(form.get("subject_id", "")).strip()
-    per_page_raw = str(form.get("per_page", "20")).strip()
-    profile_raw_values = form.getlist("profile_ids")
-
-    profile_ids = [int(v) for v in profile_raw_values if str(v).strip().isdigit()]
-    subject_ids = [int(v) for v in subject_raw_values if str(v).strip().isdigit()]
-    if subject_raw_legacy.isdigit():
-        subject_ids.append(int(subject_raw_legacy))
-    subject_ids = sorted(set(subject_ids))
-    region_id = int(region_raw) if region_raw.isdigit() else None
-    municipality_id = int(municipality_raw) if municipality_raw.isdigit() else None
-    year = int(year_raw) if year_raw.isdigit() else None
-    per_page = int(per_page_raw) if per_page_raw.isdigit() else 20
-    per_page = max(5, min(per_page, 200))
-
-    query_without_page = _build_search_query_without_page(
-        q=q,
-        region_id=region_id,
-        municipality_id=municipality_id,
-        profile_ids=profile_ids,
-        year=year,
-        kind=kind,
-        subject_ids=subject_ids,
-        per_page=per_page,
+    validate_csrf_token(request, str(form.get("csrf_token", "")))
+    params = _parse_search_request_params(
+        q=str(form.get("q", "")),
+        region_id=str(form.get("region_id", "")),
+        municipality_id=str(form.get("municipality_id", "")),
+        profile_ids=form.getlist("profile_ids"),
+        year=str(form.get("year", "")),
+        kind=str(form.get("kind", "")),
+        subject_ids=form.getlist("subject_ids"),
+        legacy_subject_id=str(form.get("subject_id", "")),
+        page=None,
+        per_page=str(form.get("per_page", str(DEFAULT_SEARCH_PER_PAGE))),
     )
+
+    query_without_page = _build_search_query_without_page_from_params(params)
     location = "/search"
     if query_without_page:
         location = f"/search?{query_without_page}&page=1"
@@ -1111,6 +1223,7 @@ async def search_action(request: Request, db: Session = Depends(get_db)):
 async def search_save_action(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
     form = await request.form()
+    validate_csrf_token(request, str(form.get("csrf_token", "")))
 
     params = _parse_search_request_params(
         q=str(form.get("q", "")),
@@ -1122,7 +1235,7 @@ async def search_save_action(request: Request, db: Session = Depends(get_db)):
         subject_ids=form.getlist("subject_ids"),
         legacy_subject_id=str(form.get("subject_id", "")),
         page=None,
-        per_page=str(form.get("per_page", "20")),
+        per_page=str(form.get("per_page", str(DEFAULT_SEARCH_PER_PAGE))),
     )
 
     q = params.q
@@ -1157,8 +1270,8 @@ async def search_save_action(request: Request, db: Session = Depends(get_db)):
             per_page=per_page,
         )
         save_status = "ok" if saved_request_id is not None else "empty"
-    except Exception:
-        traceback.print_exc()
+    except (ValueError, RuntimeError, TimeoutError) as exc:
+        logger.warning("Не удалось сохранить поисковый запрос: %s", exc)
         save_status = "error"
 
     query_without_page = _build_search_query_without_page_from_params(params)
@@ -1210,7 +1323,7 @@ def search_export(
         per_page=per_page,
     )
     filters = _build_search_filters_from_params(params)
-    rows, _ = search_schools(filters, page=1, per_page=20, apply_pagination=False)
+    rows, _ = search_schools(filters, page=1, per_page=DEFAULT_SEARCH_PER_PAGE, apply_pagination=False)
     export_rows = [
         {
             "school_id": r["school_id"],
@@ -1245,16 +1358,9 @@ def search_export(
             ]
         )
 
-    out = io.BytesIO()
-    with pd.ExcelWriter(out, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="search")
-    out.seek(0)
-
-    headers = {"Content-Disposition": "attachment; filename=school_search_export.xlsx"}
-    return StreamingResponse(
-        out,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers=headers,
+    return _excel_response(
+        filename="school_search_export.xlsx",
+        sheets=[("search", df)],
     )
 
 
@@ -1391,23 +1497,40 @@ def school_card_export(request: Request, school_id: int, db: Session = Depends(g
             ]
         )
 
-    out = io.BytesIO()
-    with pd.ExcelWriter(out, engine="openpyxl") as writer:
-        school_df.to_excel(writer, index=False, sheet_name="school")
-        profiles_df.to_excel(writer, index=False, sheet_name="profiles")
-        external_df.to_excel(writer, index=False, sheet_name="external_keys")
-        ege_periods_df.to_excel(writer, index=False, sheet_name="ege_periods")
-        ege_subjects_df.to_excel(writer, index=False, sheet_name="ege_subjects")
-        admission_df.to_excel(writer, index=False, sheet_name="admission")
-        prof_events_df.to_excel(writer, index=False, sheet_name="prof_events")
-    out.seek(0)
-
-    headers = {"Content-Disposition": f"attachment; filename=school_card_{school_id}.xlsx"}
-    return StreamingResponse(
-        out,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers=headers,
+    return _excel_response(
+        filename=f"school_card_{school_id}.xlsx",
+        sheets=[
+            ("school", school_df),
+            ("profiles", profiles_df),
+            ("external_keys", external_df),
+            ("ege_periods", ege_periods_df),
+            ("ege_subjects", ege_subjects_df),
+            ("admission", admission_df),
+            ("prof_events", prof_events_df),
+        ],
     )
+
+
+def _to_float_or_none(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_int_or_none(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_subject_analytics(ege_timeline: list[dict[str, object]]) -> dict[str, object]:
+    return build_subject_analytics(ege_timeline)
 
 
 @router.get("/search/school/{school_id}")
@@ -1432,9 +1555,16 @@ def school_card(request: Request, school_id: int, db: Session = Depends(get_db))
                 "admission_stats": [],
                 "prof_events": [],
                 "ege_timeline": [],
+                "subject_heatmap_period": "",
+                "subject_heatmap_rows": [],
+                "subject_histogram_rows": [],
+                "subject_histogram_latest_year": None,
+                "subject_histogram_prev_year": None,
                 "back_url": back_url,
             },
         )
+
+    subject_analytics = _build_subject_analytics(data["ege_timeline"])
 
     return render(
         "school_card.html",
@@ -1446,6 +1576,11 @@ def school_card(request: Request, school_id: int, db: Session = Depends(get_db))
             "admission_stats": data["admission_stats"],
             "prof_events": data["prof_events"],
             "ege_timeline": data["ege_timeline"],
+            "subject_heatmap_period": subject_analytics["heatmap_period_label"],
+            "subject_heatmap_rows": subject_analytics["heatmap_rows"],
+            "subject_histogram_rows": subject_analytics["histogram_rows"],
+            "subject_histogram_latest_year": subject_analytics["histogram_latest_year"],
+            "subject_histogram_prev_year": subject_analytics["histogram_prev_year"],
             "back_url": back_url,
         },
     )
@@ -1474,8 +1609,21 @@ class RatingRequestParams:
     show_admission_subject_avg: bool
 
 
+@dataclass(frozen=True)
+class RatingQueryContext:
+    filters: RatingFilters
+    weights: RatingWeights
+    current_query: str
+    show_admission_subject_avg: bool
+    show_potential_applicants: bool
+
+
 def _parse_bool_flag(value: str | None) -> bool:
     return (value or "").strip().lower() not in {"", "0", "false", "off", "no"}
+
+
+def _has_rating_scope(subject_ids: list[int], institute_ids: list[int], program_ids: list[int]) -> bool:
+    return bool(subject_ids) or bool(institute_ids) or bool(program_ids)
 
 
 def _parse_rating_request_params(
@@ -1531,15 +1679,22 @@ def _parse_rating_request_params(
     w_match_share_value = _parse_optional_float(w_match_share)
     w_threshold_share_value = _parse_optional_float(w_threshold_share)
     if w_graduates_value is None:
-        w_graduates_value = 0.25
+        w_graduates_value = DEFAULT_RATING_W_GRADUATES
     if w_avg_score_value is None:
-        w_avg_score_value = 0.45
+        w_avg_score_value = DEFAULT_RATING_W_AVG_SCORE
     if w_match_share_value is None:
-        w_match_share_value = 0.20
+        w_match_share_value = DEFAULT_RATING_W_MATCH_SHARE
     if w_threshold_share_value is None:
-        w_threshold_share_value = 0.10
+        w_threshold_share_value = DEFAULT_RATING_W_THRESHOLD_SHARE
 
-    limit_value = _parse_bounded_int(limit, default=300, min_value=10, max_value=2000)
+    limit_value = _parse_bounded_int(
+        limit,
+        default=DEFAULT_RATING_LIMIT,
+        min_value=MIN_RATING_LIMIT,
+        max_value=MAX_RATING_LIMIT,
+    )
+
+    show_admission_subject_avg = _has_rating_scope(subject_ids_value, institute_ids_value, program_ids_value)
 
     return RatingRequestParams(
         q=(q or "").strip(),
@@ -1559,7 +1714,7 @@ def _parse_rating_request_params(
         w_match_share=w_match_share_value,
         w_threshold_share=w_threshold_share_value,
         limit=limit_value,
-        show_admission_subject_avg=bool(subject_ids_value) or bool(institute_ids_value) or bool(program_ids_value),
+        show_admission_subject_avg=show_admission_subject_avg,
     )
 
 
@@ -1609,6 +1764,17 @@ def _build_rating_query_from_params(params: RatingRequestParams) -> str:
         w_match_share=params.w_match_share,
         w_threshold_share=params.w_threshold_share,
         limit=params.limit,
+    )
+
+
+def _build_rating_context(params: RatingRequestParams) -> RatingQueryContext:
+    has_scope = _has_rating_scope(params.subject_ids, params.institute_ids, params.program_ids)
+    return RatingQueryContext(
+        filters=_build_rating_filters_from_params(params),
+        weights=_build_rating_weights_from_params(params),
+        current_query=_build_rating_query_from_params(params),
+        show_admission_subject_avg=has_scope,
+        show_potential_applicants=has_scope,
     )
 
 
@@ -1697,11 +1863,11 @@ def rating_profile(
     min_graduates: str | None = Query(default="0"),
     min_avg_score: str | None = Query(default=""),
     enforce_subject_threshold: str | None = Query(default=None),
-    w_graduates: str | None = Query(default="0.25"),
-    w_avg_score: str | None = Query(default="0.45"),
-    w_match_share: str | None = Query(default="0.20"),
-    w_threshold_share: str | None = Query(default="0.10"),
-    limit: str | None = Query(default="300"),
+    w_graduates: str | None = Query(default=str(DEFAULT_RATING_W_GRADUATES)),
+    w_avg_score: str | None = Query(default=str(DEFAULT_RATING_W_AVG_SCORE)),
+    w_match_share: str | None = Query(default=str(DEFAULT_RATING_W_MATCH_SHARE)),
+    w_threshold_share: str | None = Query(default=str(DEFAULT_RATING_W_THRESHOLD_SHARE)),
+    limit: str | None = Query(default=str(DEFAULT_RATING_LIMIT)),
     save_status: str | None = Query(default=None),
     saved_request_id: str | None = Query(default=None),
     saved_run_id: str | None = Query(default=None),
@@ -1731,6 +1897,7 @@ def rating_profile(
         limit=limit,
     )
 
+    rating_ctx = _build_rating_context(params)
     region_id_value = params.region_id
     municipality_id_value = params.municipality_id
     year_value = params.year
@@ -1746,7 +1913,8 @@ def rating_profile(
     w_match_share_value = params.w_match_share
     w_threshold_share_value = params.w_threshold_share
     limit_value = params.limit
-    show_admission_subject_avg = params.show_admission_subject_avg
+    show_admission_subject_avg = rating_ctx.show_admission_subject_avg
+    show_potential_applicants = rating_ctx.show_potential_applicants
     has_query = _has_known_query_params(request, RATING_QUERY_KEYS)
     save_status_value = (save_status or "").strip().lower()
     saved_request_id_value = _parse_optional_int(saved_request_id)
@@ -1776,11 +1944,30 @@ def rating_profile(
     ranked: list[dict[str, object]] = []
     if has_query:
         ranked = calculate_school_rating(
-            _build_rating_filters_from_params(params),
-            _build_rating_weights_from_params(params),
+            rating_ctx.filters,
+            rating_ctx.weights,
         )
+    rating_chart_stacked: list[dict[str, object]] = []
+    if ranked:
+        for row in ranked[:10]:
+            part_graduates = float(_to_float_or_none(row.get("score_part_graduates")) or 0.0)
+            part_avg_score = float(_to_float_or_none(row.get("score_part_avg_score")) or 0.0)
+            part_potential = float(_to_float_or_none(row.get("score_part_potential")) or 0.0)
+            part_threshold = float(_to_float_or_none(row.get("score_part_threshold")) or 0.0)
+            score_total = part_graduates + part_avg_score + part_potential + part_threshold
+            rating_chart_stacked.append(
+                {
+                    "rank_pos": int(_to_int_or_none(row.get("rank_pos")) or 0),
+                    "name": str(row.get("full_name") or ""),
+                    "score_total": round(score_total, 6),
+                    "score_part_graduates": round(part_graduates, 6),
+                    "score_part_avg_score": round(part_avg_score, 6),
+                    "score_part_potential": round(part_potential, 6),
+                    "score_part_threshold": round(part_threshold, 6),
+                }
+            )
 
-    current_query = _build_rating_query_from_params(params)
+    current_query = rating_ctx.current_query
 
     return render(
         "rating_profile.html",
@@ -1790,6 +1977,8 @@ def rating_profile(
             "main_class": "container-rating",
             "has_query": has_query,
             "show_admission_subject_avg": show_admission_subject_avg,
+            "show_potential_applicants": show_potential_applicants,
+            "rating_chart_stacked": rating_chart_stacked,
             "ranked": ranked,
             "total": len(ranked),
             "program_requirements": program_requirements,
@@ -1833,6 +2022,7 @@ def rating_profile(
 async def rating_profile_save_action(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
     form = await request.form()
+    validate_csrf_token(request, str(form.get("csrf_token", "")))
 
     params = _parse_rating_request_params(
         q=str(form.get("q", "")),
@@ -1849,13 +2039,14 @@ async def rating_profile_save_action(request: Request, db: Session = Depends(get
         min_graduates=str(form.get("min_graduates", "0")),
         min_avg_score=str(form.get("min_avg_score", "")),
         enforce_subject_threshold=str(form.get("enforce_subject_threshold", "")),
-        w_graduates=str(form.get("w_graduates", "0.25")),
-        w_avg_score=str(form.get("w_avg_score", "0.45")),
-        w_match_share=str(form.get("w_match_share", "0.20")),
-        w_threshold_share=str(form.get("w_threshold_share", "0.10")),
-        limit=str(form.get("limit", "300")),
+        w_graduates=str(form.get("w_graduates", str(DEFAULT_RATING_W_GRADUATES))),
+        w_avg_score=str(form.get("w_avg_score", str(DEFAULT_RATING_W_AVG_SCORE))),
+        w_match_share=str(form.get("w_match_share", str(DEFAULT_RATING_W_MATCH_SHARE))),
+        w_threshold_share=str(form.get("w_threshold_share", str(DEFAULT_RATING_W_THRESHOLD_SHARE))),
+        limit=str(form.get("limit", str(DEFAULT_RATING_LIMIT))),
     )
-    current_query = _build_rating_query_from_params(params)
+    rating_ctx = _build_rating_context(params)
+    current_query = rating_ctx.current_query
 
     q = params.q
     kind = params.kind
@@ -1880,8 +2071,8 @@ async def rating_profile_save_action(request: Request, db: Session = Depends(get
     saved_run_id_value: int | None = None
     try:
         ranked = calculate_school_rating(
-            _build_rating_filters_from_params(params),
-            _build_rating_weights_from_params(params),
+            rating_ctx.filters,
+            rating_ctx.weights,
         )
         saved = save_rating_run(
             created_by=user.login,
@@ -1914,8 +2105,8 @@ async def rating_profile_save_action(request: Request, db: Session = Depends(get
             save_status = "ok" if saved_run_id_value is not None else "empty"
         else:
             save_status = "empty"
-    except Exception:
-        traceback.print_exc()
+    except (ValueError, RuntimeError, TimeoutError) as exc:
+        logger.warning("Не удалось сохранить рейтинг: %s", exc)
         save_status = "error"
 
     status_params: list[tuple[str, str]] = [("save_status", save_status)]
@@ -1948,11 +2139,11 @@ def rating_export(
     min_graduates: str | None = Query(default="0"),
     min_avg_score: str | None = Query(default=""),
     enforce_subject_threshold: str | None = Query(default=None),
-    w_graduates: str | None = Query(default="0.25"),
-    w_avg_score: str | None = Query(default="0.45"),
-    w_match_share: str | None = Query(default="0.20"),
-    w_threshold_share: str | None = Query(default="0.10"),
-    limit: str | None = Query(default="300"),
+    w_graduates: str | None = Query(default=str(DEFAULT_RATING_W_GRADUATES)),
+    w_avg_score: str | None = Query(default=str(DEFAULT_RATING_W_AVG_SCORE)),
+    w_match_share: str | None = Query(default=str(DEFAULT_RATING_W_MATCH_SHARE)),
+    w_threshold_share: str | None = Query(default=str(DEFAULT_RATING_W_THRESHOLD_SHARE)),
+    limit: str | None = Query(default=str(DEFAULT_RATING_LIMIT)),
     db: Session = Depends(get_db),
 ):
     require_user(request, db)
@@ -1979,6 +2170,7 @@ def rating_export(
         limit=limit,
     )
 
+    rating_ctx = _build_rating_context(params)
     region_id_value = params.region_id
     municipality_id_value = params.municipality_id
     year_value = params.year
@@ -1994,17 +2186,19 @@ def rating_export(
     w_match_share_value = params.w_match_share
     w_threshold_share_value = params.w_threshold_share
     limit_value = params.limit
+    show_potential_applicants = rating_ctx.show_potential_applicants
     has_query = bool(request.query_params)
 
     ranked: list[dict[str, object]] = []
     if has_query:
         ranked = calculate_school_rating(
-            _build_rating_filters_from_params(params),
-            _build_rating_weights_from_params(params),
+            rating_ctx.filters,
+            rating_ctx.weights,
         )
 
-    export_rows = [
-        {
+    export_rows: list[dict[str, object]] = []
+    for r in ranked:
+        row: dict[str, object] = {
             "rank_pos": r.get("rank_pos"),
             "school_id": r.get("school_id"),
             "region_name": r.get("region_name"),
@@ -2017,34 +2211,40 @@ def rating_export(
             "last_year": r.get("last_year"),
             "programs_total": r.get("programs_total"),
             "programs_matched": r.get("programs_matched"),
-            "match_share_pct": round(float(r.get("match_share", 0)) * 100.0, 2),
             "threshold_share_pct": round(float(r.get("threshold_share", 0)) * 100.0, 2),
             "rating_score": r.get("rating_score"),
             "matched_programs": r.get("matched_programs"),
         }
-        for r in ranked
-    ]
+        if show_potential_applicants:
+            row["potential_applicants_avg"] = r.get("potential_applicants_avg")
+        export_rows.append(row)
     df = pd.DataFrame(export_rows)
     if df.empty:
-        df = pd.DataFrame(
-            columns=[
-                "rank_pos",
-                "school_id",
-                "region_name",
-                "municipality_name",
-                "full_name",
-                "profile_names",
-                "avg_graduates",
-                "avg_score_all",
-                "ege_years",
-                "last_year",
-                "programs_total",
-                "programs_matched",
-                "match_share_pct",
+        rating_columns = [
+            "rank_pos",
+            "school_id",
+            "region_name",
+            "municipality_name",
+            "full_name",
+            "profile_names",
+            "avg_graduates",
+            "avg_score_all",
+            "ege_years",
+            "last_year",
+            "programs_total",
+            "programs_matched",
+        ]
+        if show_potential_applicants:
+            rating_columns.append("potential_applicants_avg")
+        rating_columns.extend(
+            [
                 "threshold_share_pct",
                 "rating_score",
                 "matched_programs",
             ]
+        )
+        df = pd.DataFrame(
+            columns=rating_columns
         )
 
     filters_df = pd.DataFrame(
@@ -2069,17 +2269,9 @@ def rating_export(
         ]
     )
 
-    out = io.BytesIO()
-    with pd.ExcelWriter(out, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="rating")
-        filters_df.to_excel(writer, index=False, sheet_name="filters")
-    out.seek(0)
-
-    headers = {"Content-Disposition": "attachment; filename=school_rating_export.xlsx"}
-    return StreamingResponse(
-        out,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers=headers,
+    return _excel_response(
+        filename="school_rating_export.xlsx",
+        sheets=[("rating", df), ("filters", filters_df)],
     )
 
 
@@ -2130,8 +2322,11 @@ def _render_report_generate_page(
     runs: list[dict[str, object]] = []
     try:
         runs = fetch_rating_runs(limit=200)
+    except (ValueError, RuntimeError, TimeoutError, OSError) as exc:
+        logger.warning("Не удалось загрузить список расчетов: %s", exc)
+        page_error = page_error or f"Не удалось загрузить список расчетов: {exc}"
     except Exception as exc:
-        traceback.print_exc()
+        logger.exception("Непредвиденная ошибка при загрузке списка расчетов")
         page_error = page_error or f"Не удалось загрузить список расчетов: {exc}"
 
     run_ids = {int(item["run_id"]) for item in runs}
@@ -2150,8 +2345,11 @@ def _render_report_generate_page(
     if selected_run_id is not None:
         try:
             run_schools = fetch_run_schools(selected_run_id, limit=3000)
+        except (ValueError, RuntimeError, TimeoutError, OSError) as exc:
+            logger.warning("Не удалось загрузить школы для run_id=%s: %s", selected_run_id, exc)
+            page_error = page_error or f"Не удалось загрузить школы для расчета #{selected_run_id}: {exc}"
         except Exception as exc:
-            traceback.print_exc()
+            logger.exception("Непредвиденная ошибка при загрузке школ для run_id=%s", selected_run_id)
             page_error = page_error or f"Не удалось загрузить школы для расчета #{selected_run_id}: {exc}"
 
     return render(
@@ -2196,11 +2394,13 @@ def report_generate_action(
     school_id: str = Form(""),
     report_type: str = Form("standard"),
     report_format: str = Form("json"),
+    csrf_token: str = Form(""),
     db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
     if user is None:
         return RedirectResponse("/login", status_code=303)
+    validate_csrf_token(request, csrf_token)
     run_id_value = _parse_optional_int(run_id)
     school_id_value = _parse_optional_int(school_id)
 
@@ -2223,8 +2423,8 @@ def report_generate_action(
             report_format=report_format,
             school_id=school_id_value,
         )
-    except Exception:
-        traceback.print_exc()
+    except (ValueError, RuntimeError, TimeoutError) as exc:
+        logger.warning("Не удалось сформировать отчет: %s", exc)
         return _render_report_generate_page(
             request=request,
             user=user,
@@ -2309,24 +2509,14 @@ def report_run_export(request: Request, run_id: int, db: Session = Depends(get_d
             value_repr = value
         meta_items.append({"key": key, "value": value_repr})
     meta_df = pd.DataFrame(meta_items)
-    ranking_df = _prepare_df_for_excel(ranking_df)
-    filters_df = _prepare_df_for_excel(filters_df)
-    weights_df = _prepare_df_for_excel(weights_df)
-    meta_df = _prepare_df_for_excel(meta_df)
-
-    out = io.BytesIO()
-    with pd.ExcelWriter(out, engine="openpyxl") as writer:
-        ranking_df.to_excel(writer, index=False, sheet_name="rating_run")
-        filters_df.to_excel(writer, index=False, sheet_name="filters")
-        weights_df.to_excel(writer, index=False, sheet_name="weights")
-        meta_df.to_excel(writer, index=False, sheet_name="meta")
-    out.seek(0)
-
-    headers = {"Content-Disposition": f"attachment; filename=rating_run_{run_id}.xlsx"}
-    return StreamingResponse(
-        out,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers=headers,
+    return _excel_response(
+        filename=f"rating_run_{run_id}.xlsx",
+        sheets=[
+            ("rating_run", ranking_df),
+            ("filters", filters_df),
+            ("weights", weights_df),
+            ("meta", meta_df),
+        ],
     )
 
 
@@ -2357,19 +2547,9 @@ def report_payload_export(request: Request, report_id: int, db: Session = Depend
         payload_df = pd.json_normalize(report_payload, sep=".")
         if payload_df.empty:
             payload_df = pd.DataFrame([{"payload_json": json.dumps(report_payload, ensure_ascii=False, default=str)}])
-        summary_df = _prepare_df_for_excel(summary_df)
-        payload_df = _prepare_df_for_excel(payload_df)
-
-        out = io.BytesIO()
-        with pd.ExcelWriter(out, engine="openpyxl") as writer:
-            summary_df.to_excel(writer, index=False, sheet_name="summary")
-            payload_df.to_excel(writer, index=False, sheet_name="payload")
-        out.seek(0)
-        headers = {"Content-Disposition": f"attachment; filename=school_report_{report_id}.xlsx"}
-        return StreamingResponse(
-            out,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers=headers,
+        return _excel_response(
+            filename=f"school_report_{report_id}.xlsx",
+            sheets=[("summary", summary_df), ("payload", payload_df)],
         )
 
     content = json.dumps(report_payload, ensure_ascii=False, indent=2, default=str).encode("utf-8")
@@ -2449,4 +2629,5 @@ def admin_directories(request: Request, db: Session = Depends(get_db)):
 def admin_methodologies(request: Request, db: Session = Depends(get_db)):
     user = require_admin(request, db)
     return render("stub_page.html", {"request": request, "user": user, "title": "Методики", "back_url": "/admin"})
+
 

@@ -1,17 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Загрузка школ и профилей из Excel в PostgreSQL.
+???????? ????, ??????????????? ? ?????????? ?????? ?? Excel ? PostgreSQL.
 
-Ожидаемые столбцы Excel
-- Муниципальное образование
-- Образовательная организация (школа)
-- Профиль (при наличии)
-
-Что делает
-- Регион берёт из имени файла
-- Записывает регион, муниципалитет, школу
-- Приводит полные типовые названия школ к сокращенному виду
-- Нормализует профили и записывает в edu.school_profile и edu.school_profile_link
+?????? ??????????? ????????, ?????????????? ???????
+? ?????????? ?????? ? ??????? edu.school* ? ???????????.
 """
 
 from __future__ import annotations
@@ -306,6 +298,44 @@ def _municipality_sql_norm(expr: str) -> str:
     return f"replace(lower({with_city_prefix}), 'ё', 'е')"
 
 
+def _municipality_code3_sql(expr: str) -> str:
+    return (
+        "CASE "
+        f"WHEN {expr} ~ '^[[:space:]]*[(][[:space:]]*[0-9]+' "
+        f"THEN lpad(substr((regexp_match({expr}, '^[[:space:]]*[(][[:space:]]*([0-9]+)'))[1], 1, 3), 3, '0') "
+        "ELSE NULL "
+        "END"
+    )
+
+
+def _municipality_key_sql(expr: str) -> str:
+    return f"COALESCE({_municipality_code3_sql(expr)}, {_municipality_sql_norm(expr)})"
+
+
+PRIMORSKY_REGION_NORM = "приморский край"
+
+
+def _region_sql_norm(expr: str) -> str:
+    squeezed = f"regexp_replace(btrim({expr}), '[[:space:]]+', ' ', 'g')"
+    return f"replace(lower({squeezed}), 'ё', 'е')"
+
+
+def _school_code3_sql(expr: str) -> str:
+    return (
+        f"CASE "
+        f"WHEN {expr} ~ '^[[:space:]]*[(]?[[:space:]]*[0-9]+' "
+        f"THEN lpad(substr((regexp_match({expr}, '^[[:space:]]*[(]?[[:space:]]*([0-9]+)'))[1], 1, 3), 3, '0') "
+        f"ELSE NULL "
+        f"END"
+    )
+
+
+def _school_sql_norm(expr: str) -> str:
+    squeezed = f"regexp_replace(btrim({expr}), '[[:space:]]+', ' ', 'g')"
+    folded = f"replace(lower({squeezed}), 'ё', 'е')"
+    return f"regexp_replace({folded}, 'ого(?=$|[[:space:][:punct:]])', 'ий', 'g')"
+
+
 def insert_municipalities(cur, rows: Sequence[Tuple[int, str]]) -> None:
     if not rows:
         return
@@ -400,8 +430,13 @@ def fetch_municipality_ids(cur, rows: Sequence[Tuple[int, str]]) -> Dict[Tuple[i
 
 
 def insert_schools(cur, rows: Sequence[Tuple[int, str]]) -> None:
-    src_mun_norm = _municipality_sql_norm("m.name")
-    m2_mun_norm = _municipality_sql_norm("m2.name")
+    src_mun_key = _municipality_key_sql("m.name")
+    m2_mun_key = _municipality_key_sql("m2.name")
+    r_name_norm = _region_sql_norm("r.name")
+    src_code3 = _school_code3_sql("v.full_name")
+    s_code3 = _school_code3_sql("s.full_name")
+    src_school_norm = _school_sql_norm("v.full_name")
+    s_school_norm = _school_sql_norm("s.full_name")
     q = f"""
         WITH v(municipality_id, full_name, is_active) AS (VALUES %s),
         src AS (
@@ -410,19 +445,26 @@ def insert_schools(cur, rows: Sequence[Tuple[int, str]]) -> None:
                 v.full_name,
                 v.is_active,
                 m.region_id,
-                {src_mun_norm} AS mun_name_norm
+                {src_mun_key} AS municipality_key,
+                {r_name_norm} AS region_name_norm,
+                {src_code3} AS school_code3,
+                {src_school_norm} AS school_name_norm
             FROM v
             JOIN edu.municipality m ON m.municipality_id = v.municipality_id
+            JOIN edu.region r ON r.region_id = m.region_id
         ),
         dedup AS (
             SELECT
                 MIN(municipality_id) AS municipality_id,
-                full_name,
+                MIN(full_name) AS full_name,
                 BOOL_OR(is_active) AS is_active,
                 region_id,
-                mun_name_norm
+                municipality_key,
+                region_name_norm,
+                school_code3,
+                school_name_norm
             FROM src
-            GROUP BY region_id, mun_name_norm, full_name
+            GROUP BY region_id, municipality_key, region_name_norm, school_code3, school_name_norm
         )
         INSERT INTO edu.school (municipality_id, full_name, is_active)
         SELECT d.municipality_id, d.full_name, d.is_active
@@ -432,8 +474,15 @@ def insert_schools(cur, rows: Sequence[Tuple[int, str]]) -> None:
             FROM edu.school s
             JOIN edu.municipality m2 ON m2.municipality_id = s.municipality_id
             WHERE m2.region_id = d.region_id
-              AND {m2_mun_norm} = d.mun_name_norm
-              AND s.full_name = d.full_name
+              AND {m2_mun_key} = d.municipality_key
+              AND (
+                    (
+                        d.region_name_norm = '{PRIMORSKY_REGION_NORM}'
+                        AND d.school_code3 IS NOT NULL
+                        AND {s_code3} = d.school_code3
+                    )
+                    OR {s_school_norm} = d.school_name_norm
+              )
         )
         ON CONFLICT (municipality_id, full_name) DO NOTHING
     """
@@ -444,8 +493,13 @@ def fetch_school_ids(cur, rows: Sequence[Tuple[int, str]]) -> Dict[Tuple[int, st
     if not rows:
         return {}
 
-    src_mun_norm = _municipality_sql_norm("m.name")
-    m2_mun_norm = _municipality_sql_norm("m2.name")
+    src_mun_key = _municipality_key_sql("m.name")
+    m2_mun_key = _municipality_key_sql("m2.name")
+    r_name_norm = _region_sql_norm("r.name")
+    src_code3 = _school_code3_sql("v.full_name")
+    s_code3 = _school_code3_sql("s.full_name")
+    src_school_norm = _school_sql_norm("v.full_name")
+    s_school_norm = _school_sql_norm("s.full_name")
     query = f"""
         WITH v(municipality_id, full_name) AS (VALUES %s),
         v_norm AS (
@@ -453,26 +507,62 @@ def fetch_school_ids(cur, rows: Sequence[Tuple[int, str]]) -> Dict[Tuple[int, st
                 v.municipality_id AS src_mid,
                 v.full_name AS src_full_name,
                 m.region_id,
-                {src_mun_norm} AS mun_name_norm
+                {src_mun_key} AS municipality_key,
+                {src_code3} AS school_code3,
+                {r_name_norm} AS region_name_norm,
+                {src_school_norm} AS school_name_norm
             FROM v
             JOIN edu.municipality m ON m.municipality_id = v.municipality_id
+            JOIN edu.region r ON r.region_id = m.region_id
+        ),
+        unique_code_match AS (
+            SELECT
+                m2.region_id,
+                {m2_mun_key} AS municipality_key,
+                {s_code3} AS school_code3,
+                MIN(s.school_id) AS school_id
+            FROM edu.school s
+            JOIN edu.municipality m2 ON m2.municipality_id = s.municipality_id
+            JOIN edu.region r2 ON r2.region_id = m2.region_id
+            WHERE {_region_sql_norm("r2.name")} = '{PRIMORSKY_REGION_NORM}'
+              AND {s_code3} IS NOT NULL
+            GROUP BY m2.region_id, {m2_mun_key}, {s_code3}
         ),
         candidates AS (
             SELECT
                 v.src_mid,
                 v.src_full_name,
-                s.school_id
+                ucm.school_id,
+                1 AS match_priority
+            FROM v_norm v
+            JOIN unique_code_match ucm
+              ON ucm.region_id = v.region_id
+             AND ucm.municipality_key = v.municipality_key
+             AND ucm.school_code3 = v.school_code3
+            WHERE v.region_name_norm = '{PRIMORSKY_REGION_NORM}'
+              AND v.school_code3 IS NOT NULL
+
+            UNION ALL
+
+            SELECT
+                v.src_mid,
+                v.src_full_name,
+                s.school_id,
+                2 AS match_priority
             FROM v_norm v
             JOIN edu.municipality m2
               ON m2.region_id = v.region_id
-             AND {m2_mun_norm} = v.mun_name_norm
+             AND {m2_mun_key} = v.municipality_key
             JOIN edu.school s
               ON s.municipality_id = m2.municipality_id
-             AND s.full_name = v.src_full_name
+             AND {s_school_norm} = v.school_name_norm
         )
-        SELECT MIN(c.school_id) AS school_id, c.src_mid, c.src_full_name
+        SELECT DISTINCT ON (c.src_mid, c.src_full_name)
+            c.school_id,
+            c.src_mid,
+            c.src_full_name
         FROM candidates c
-        GROUP BY c.src_mid, c.src_full_name
+        ORDER BY c.src_mid, c.src_full_name, c.match_priority, c.school_id
     """
     fetched = execute_values(cur, query, list(rows), fetch=True)
     return {(mid, nm): sid for (sid, mid, nm) in fetched}

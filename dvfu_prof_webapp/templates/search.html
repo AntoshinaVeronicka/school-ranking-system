@@ -3,6 +3,7 @@
 <h1>Поиск школ</h1>
 
 <form method="get" action="/search" class="card search-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <div class="search-grid">
     <label class="field field-q">Название школы (поиск по вхождению)
       <input name="q" value="{{ filters.q }}" placeholder="Например: лицей №23">

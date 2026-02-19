@@ -5,6 +5,7 @@
 <div class="card">
   <h2>Загрузка справочников из Excel</h2>
   <form method="post" action="/data/directories/load" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="row">
       <label class="grow">Тип загрузки
         <select name="loader_type" required>
@@ -59,6 +60,7 @@
 <div class="card">
   <h2>Обновление минимальных баллов по предметам ЕГЭ</h2>
   <form method="post" action="/data/directories/min-scores">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <table class="table">
       <thead>
         <tr>
