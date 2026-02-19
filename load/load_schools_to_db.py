@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-???????? ????, ??????????????? ? ?????????? ?????? ?? Excel ? PostgreSQL.
+Загрузка школ, муниципалитетов и профильных связей из Excel в PostgreSQL.
 
-?????? ??????????? ????????, ?????????????? ???????
-? ?????????? ?????? ? ??????? edu.school* ? ???????????.
+Скрипт нормализует названия, подготавливает профили
+и записывает данные в таблицы edu.school* и справочники.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from load_common import (
 warnings.filterwarnings("ignore", message=r"Print area cannot be set.*", category=UserWarning, module="openpyxl")
 
 
-# Нормализация профилей 
+# Нормализация профилей.
 PROFILE_ABSENT_RE = re.compile(r"(^|\b)(х|x|нет|отсутствует|не\s*имеется)\b", flags=re.IGNORECASE)
 PROFILE_TAIL_NOTE_RE = re.compile(r"(\b[хx]\b\s*[-–—]?\s*отсутствует.*)$", flags=re.IGNORECASE)
 HYPHEN_FIX_RE = re.compile(r"\s*[-–—]\s*")
@@ -126,7 +126,7 @@ def split_profiles(cell: str) -> List[str]:
     return out
 
 
-#  Выбор листа и чтение Excel 
+# Выбор листа и чтение Excel.
 def get_sheet_names(path: Path) -> List[str]:
     xls = pd.ExcelFile(path, engine="openpyxl")
     return list(xls.sheet_names)
@@ -172,12 +172,12 @@ def resolve_sheet_argument(sheet_arg: str, sheet_names: List[str]) -> object:
 
     if value.isdigit():
         idx = int(value)
-        # Поддержка ввода индекса листа в человеко-ориентированном формате (1..N).
+        # Поддерживаем ввод индекса листа в человеко-ориентированном формате (1..N).
         if 1 <= idx <= len(sheet_names):
             return sheet_names[idx - 1]
         if idx == 0 and sheet_names:
             return sheet_names[0]
-        # Обратная совместимость со старым 0-based поведением.
+        # Сохраняем обратную совместимость со старым 0-based поведением.
         if 0 <= idx < len(sheet_names):
             return sheet_names[idx]
 
@@ -244,7 +244,7 @@ def read_excel_fixed(path: Path, sheet: object) -> pd.DataFrame:
     mun_col, school_col, profile_col = resolve_excel_columns(df)
     region = infer_region_from_filename(path)
 
-    # если в Excel объединены ячейки, то часть строк будет пустой
+    # Если в Excel объединены ячейки, часть строк будет пустой.
     df[mun_col] = df[mun_col].ffill()
     df[school_col] = df[school_col].ffill()
 
@@ -272,7 +272,7 @@ def read_excel_fixed(path: Path, sheet: object) -> pd.DataFrame:
     return out
 
 
-#  Вставки в БД 
+# Вставки в БД.
 def insert_regions(cur, regions: Sequence[str]) -> None:
     q = """
         INSERT INTO edu.region (name)
@@ -599,7 +599,7 @@ def insert_profile_links(cur, links: Iterable[Tuple[int, int]]) -> int:
     return len(data)
 
 
-#  Основная загрузка 
+# Основной процесс загрузки.
 def load_to_db(df: pd.DataFrame, db_cfg: Dict[str, object], dry_run: bool = False) -> None:
     if df.empty:
         print("Нет данных для загрузки")

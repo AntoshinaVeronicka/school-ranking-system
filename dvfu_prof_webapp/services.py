@@ -39,7 +39,7 @@ except ImportError:
     from db import ImportJob, User
 
 
-# ???????????? ? ??????.
+# Безопасность и сессии.
 pwd = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 CSRF_SESSION_KEY = "_csrf_token"
 logger = logging.getLogger(__name__)
@@ -103,7 +103,7 @@ def require_admin(request: Request, db: Session) -> User:
     return user
 
 
-# ????? ? ??????????????? ???????.
+# Формы и вспомогательные функции.
 def default_ege_form() -> dict[str, Any]:
     return {"region": "", "kind": "actual", "sheet": "", "year": "", "dry_run": False}
 

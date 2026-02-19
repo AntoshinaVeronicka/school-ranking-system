@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-??????????? ?????? ???? ? ??????? ????????? ?????? ?? ???????????? ??????.
+Схлопывание дублей школ и перенос связанных данных на канонические записи.
 
-????? ?????? ?????? ???????; ??? ?????? ?????? ??????????
-???? ?????-?????, ????????? ?????? ??????????? ? ?????????.
+Дубли ищутся внутри региона; для каждой группы выбирается
+одна школа-канон, остальные записи переносятся и удаляются.
 """
 
 from __future__ import annotations
@@ -86,11 +86,11 @@ def _school_code3_sql(expr: str) -> str:
 def _school_name_norm_sql(expr: str) -> str:
     squeezed = _norm_spaces_sql(expr)
     folded = _fold_ru_sql(squeezed)
-    # ...ОГО -> ...ИЙ
+    # ...ОГО -> ...ИЙ.
     folded = f"regexp_replace({folded}, 'ого(?=$|[[:space:][:punct:]])', 'ий', 'g')"
-    # убираем ведущий цифровой код школы: "(142) " / "142 "
+    # Убираем ведущий цифровой код школы: "(142) " / "142 ".
     no_lead_code = f"regexp_replace({folded}, '^[[:space:]]*[(]?[[:space:]]*[0-9]+[)]?[[:space:]]*', '', 'g')"
-    # сравнение в ключе без разделителей
+    # Формируем ключ сравнения без разделителей.
     return f"regexp_replace({no_lead_code}, '[^0-9a-zа-я]+', '', 'g')"
 
 
@@ -267,7 +267,7 @@ def apply_merge(cur) -> Dict[str, int]:
         cur.execute(sql)
         stats[name] = int(cur.rowcount) if cur.rowcount != -1 else 0
 
-    # --- Лёгкие связи (insert+delete old)
+    # Лёгкие связи (вставка + удаление старых записей).
     exec_count(
         "school_profile_link_insert",
         """
@@ -306,7 +306,7 @@ def apply_merge(cur) -> Dict[str, int]:
         """,
     )
 
-    # --- ЕГЭ (с мерджем по (school_id, year, kind))
+    # ЕГЭ (merge по (school_id, year, kind)).
     exec_count(
         "ege_school_year_upsert",
         f"""
@@ -381,7 +381,7 @@ def apply_merge(cur) -> Dict[str, int]:
         """,
     )
 
-    # --- Прием (school_admission_stat + school_admission_detail)
+    # Приём (school_admission_stat + school_admission_detail).
     exec_count(
         "school_admission_stat_upsert",
         f"""
@@ -462,7 +462,7 @@ def apply_merge(cur) -> Dict[str, int]:
         """,
     )
 
-    # --- Профориентация
+    # Профориентация.
     exec_count(
         "prof_event_update_school",
         """
@@ -473,7 +473,7 @@ def apply_merge(cur) -> Dict[str, int]:
         """,
     )
 
-    # --- Аналитика
+    # Аналитика.
     exec_count(
         "analytics_run_school_insert",
         """
@@ -677,7 +677,7 @@ def apply_merge(cur) -> Dict[str, int]:
         """,
     )
 
-    # --- Финально удаляем дубли в edu.school
+    # В финале удаляем дубли в edu.school.
     exec_count(
         "school_delete_old",
         """

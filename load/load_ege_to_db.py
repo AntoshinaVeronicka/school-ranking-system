@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-???????? ?????????? ??? ?? Excel ? ??????? edu.*.
+Загрузка статистики ЕГЭ из Excel в таблицы edu.*.
 
-?????? ?????? ????, ???????????? ????? ?? ????????????,
-?????????? ?????????? ? ????????? upsert ? ??.
+Скрипт читает лист, сопоставляет школы со справочником,
+агрегирует показатели и выполняет upsert в БД.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ warnings.filterwarnings(
 )
 
 
-# ???????????.
+# Логирование.
 
 def setup_logging(level: str = "INFO") -> None:
     logging.basicConfig(
@@ -54,7 +54,7 @@ def setup_logging(level: str = "INFO") -> None:
     )
 
 
-# ?????????? ?????????.
+# Справочник предметов.
 
 SUBJECT_CANON: List[str] = [
     "Русский язык",
@@ -103,7 +103,7 @@ def normalize_subject_title(x: Any) -> str:
     return s0
 
 
-# ?????????????? ????????.
+# Преобразование значений.
 
 def to_int(v: Any) -> Optional[int]:
     if v is None:
@@ -135,7 +135,7 @@ def to_decimal_2(v: Any) -> Optional[Decimal]:
         return None
 
 
-# ?????? ? ?????????? Excel.
+# Чтение и подготовка Excel.
 
 def choose_sheet(path: Path, default_sheet: Optional[str] = None) -> str:
     xls = pd.ExcelFile(path)
@@ -217,7 +217,7 @@ def clean_common_rows(out: pd.DataFrame) -> pd.DataFrame:
     out["school"] = out["school"].replace({"nan": "", "none": "", "nat": ""})
     out["school"] = out["school"].map(standardize_school_name)
 
-    # фильтры мусора
+    # Фильтры мусора.
     out = out[(out["municipality"] != "") & (out["school"] != "")]
     out = out[~out["municipality"].str.contains(r"\bвсего\b", case=False, na=False)]
     out = out[~out["school"].str.contains(r"\bвсего\b", case=False, na=False)]
@@ -282,7 +282,7 @@ def read_plan_excel(path: Path, sheet: str) -> pd.DataFrame:
             }
         )
 
-        # часто в таких таблицах муниципалитет и школа "сверху вниз" – протягиваем
+        # В таких таблицах муниципалитет и школа часто идут "сверху вниз" — протягиваем значения.
         out["municipality"] = out["municipality"].ffill()
         out["school"] = out["school"].ffill()
 
@@ -671,7 +671,7 @@ def build_school_index(
     return pair_exact_unique, pair_unique, school_unique, pair_exact_amb, pair_amb, school_amb
 
 
-# ?????? ?????? ? ?? (upsert).
+# Запись данных в БД (upsert).
 
 def upsert_ege_school_year(cur, rows: List[Tuple[int, int, str, int]]) -> Dict[int, int]:
     """
@@ -716,7 +716,7 @@ def upsert_ege_subject_stats(
     execute_values(cur, q, rows, page_size=2000)
 
 
-# -------------------- aggregation (если в Excel несколько строк на одну школу) --------------------
+# Агрегация, если в Excel несколько строк на одну школу.
 
 def _sum_int(a: Optional[int], b: Optional[int]) -> Optional[int]:
     if a is None and b is None:
@@ -736,11 +736,11 @@ def merge_subject_acc(dst: Dict[str, Any], src: Dict[str, Any]) -> None:
     - counts: суммируем
     - avg_score: считаем среднее взвешенное по participants_cnt (если есть), иначе по 1
     """
-    # ????????.
+    # Счётчики.
     for k in ("participants_cnt", "not_passed_cnt", "high_80_99_cnt", "score_100_cnt", "chosen_cnt"):
         dst[k] = _sum_int(dst.get(k), src.get(k))
 
-    # ??????? ????????.
+    # Средние значения.
     a = src.get("avg_score")
     if a is None:
         return
@@ -829,7 +829,7 @@ def sanitize_subject_metrics(
             metrics[key] = participants
 
 
-# ???????? ??????? ????????.
+# Основной процесс загрузки.
 
 def load_ege_to_db(
     path: Path,
@@ -854,7 +854,7 @@ def load_ege_to_db(
             allowed_kinds = fetch_allowed_kinds(cur)
             kind_db = normalize_kind_for_db(kind_ui, allowed=allowed_kinds)
 
-            # читаем Excel под kind
+            # Читаем Excel для выбранного типа данных.
             if kind_db == "plan":
                 df = read_plan_excel(path, sheet)
             else:
@@ -876,7 +876,7 @@ def load_ege_to_db(
                         "Проверьте тип данных/лист файла."
                     )
 
-            # справочники
+            # Загружаем справочники.
             subject_name_to_id = fetch_subject_map(cur)
             resolved_region_name = resolve_region_name(cur, region_name)
             if region_name and not resolved_region_name:
@@ -905,7 +905,7 @@ def load_ege_to_db(
                     len(code3_amb),
                 )
 
-            # аккумулируем по school_id
+            # Агрегируем данные по school_id.
             per_school_grads: Dict[int, int] = {}
             per_school_subjects: Dict[int, Dict[str, Dict[str, Any]]] = {}
 
@@ -933,7 +933,7 @@ def load_ege_to_db(
                     sid = school_unique.get(sk)
 
                 if sid is None:
-                    # различаем "не нашли" и "неоднозначно"
+                    # Различаем случаи "не нашли" и "неоднозначно".
                     code3_is_amb = bool(code3 and code3 in code3_amb)
                     if (mun, sk) in pair_exact_amb or (mk, sk) in pair_amb or sk in school_amb or code3_is_amb:
                         skipped_ambiguous += 1
@@ -998,7 +998,7 @@ def load_ege_to_db(
                             "high_80_99_cnt": h,
                             "score_100_cnt": s100,
                             "avg_score": a,
-                            "chosen_cnt": p,  # выбранных в actual храним как participants_cnt
+                            "chosen_cnt": p,  # Для actual храним выбранных в participants_cnt.
                         }
                         dst = per_school_subjects[sid].setdefault(
                             subj,
@@ -1015,7 +1015,7 @@ def load_ege_to_db(
                         )
                         merge_subject_acc(dst, src)
 
-            # приводим avg_score к финальному виду
+            # Приводим avg_score к финальному виду.
             if kind_db == "actual":
                 for sid, subj_map in per_school_subjects.items():
                     for subj, m in subj_map.items():
@@ -1101,7 +1101,7 @@ def load_ege_to_db(
             )
 
 
-# ????????? ????????? ??????.
+# Интерфейс командной строки.
 
 def main() -> None:
     setup_logging(os.getenv("LOG_LEVEL", "INFO"))

@@ -48,9 +48,9 @@ class User(Base):
 class ImportJob(Base):
     __tablename__ = "import_job"
     id = Column(Integer, primary_key=True)
-    job_type = Column(String(32), nullable=False)  # ege | admissions | events
+    job_type = Column(String(32), nullable=False)  # типы импорта: ege | admissions | events
     filename = Column(String(255), nullable=False)
-    status = Column(String(32), nullable=False, default="uploaded")  # uploaded | validated | loaded | error
+    status = Column(String(32), nullable=False, default="uploaded")  # статусы: uploaded | validated | loaded | error
     details = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=sqlfunc.now(), nullable=False)
 

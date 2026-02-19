@@ -34,7 +34,7 @@ def _heat_color(value: float | None, *, min_value: float, max_value: float, inve
     if invert:
         ratio = 1.0 - ratio
 
-    hue = int(12 + ratio * 108)  # red -> green
+    hue = int(12 + ratio * 108)  # Цветовая шкала: от красного к зелёному.
     light = int(95 - ratio * 14)
     return f"hsl({hue} 72% {light}%)"
 

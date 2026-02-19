@@ -1,10 +1,10 @@
--- Prevent duplicates in municipality names inside one region
--- after normalization:
--- 1) trim/collapse spaces
--- 2) normalize city prefix: "г. ", "г " and "Город " -> "город "
--- 3) case-insensitive compare + "ё" -> "е"
+-- Исключаем дубли названий муниципалитетов в пределах одного региона
+-- после нормализации:
+-- 1) обрезка и схлопывание пробелов
+-- 2) нормализация префикса города: "г. ", "г " и "Город " -> "город "
+-- 3) регистронезависимое сравнение + "ё" -> "е"
 --
--- Step 1 (diagnostic): if this query returns rows, merge duplicates first.
+-- Шаг 1 (диагностика): если запрос вернул строки, сначала объедините дубли.
 WITH normed AS (
     SELECT
         m.municipality_id,
@@ -32,8 +32,8 @@ FROM normed n
 GROUP BY n.region_id, n.name_norm
 HAVING COUNT(*) > 1;
 
--- Step 2: enforce uniqueness by normalized (lowercase) name.
--- If Step 1 returned duplicates, this statement will fail until duplicates are cleaned.
+-- Шаг 2: включаем уникальность по нормализованному (lowercase) имени.
+-- Если на шаге 1 остались дубли, этот индекс не создастся до их очистки.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_municipality_region_name_norm
     ON edu.municipality (
         region_id,

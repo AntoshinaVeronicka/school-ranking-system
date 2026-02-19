@@ -185,7 +185,7 @@ RATING_QUERY_KEYS = {
     "limit",
 }
 
-# 0 Вход / 0.1 Восстановление / 1 Меню / 1.1 Выход
+# Раздел 0. Вход, восстановление доступа и выход.
 @router.get("/")
 def main_menu(request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
@@ -235,7 +235,7 @@ def logout(request: Request, csrf_token: str = Form("")):
     return RedirectResponse("/login", status_code=303)
 
 
-# 2 Данные и загрузки
+# Раздел 2. Загрузка данных.
 @router.get("/data")
 def data_mgmt(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
@@ -869,7 +869,7 @@ async def directories_min_scores_action(request: Request, db: Session = Depends(
         )
 
 
-# 3 Поиск и карточка школы
+# Раздел 3. Поиск и карточка школы.
 def _build_search_filters(
     *,
     q: str,
@@ -1586,7 +1586,7 @@ def school_card(request: Request, school_id: int, db: Session = Depends(get_db))
     )
 
 
-# 4 Подбор и рейтинг
+# Раздел 4. Подбор и рейтинг.
 @dataclass(frozen=True)
 class RatingRequestParams:
     q: str
@@ -2275,7 +2275,7 @@ def rating_export(
     )
 
 
-# 5 Настройки анализа (заглушки)
+# Раздел 5. Настройки анализа (заглушки).
 @router.get("/settings")
 def settings_home(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
@@ -2300,7 +2300,7 @@ def settings_profiles(request: Request, db: Session = Depends(get_db)):
     return render("stub_page.html", {"request": request, "user": user, "title": "Профили расчёта", "back_url": "/settings"})
 
 
-# 6 Отчётность
+# Раздел 6. Отчётность.
 @router.get("/reports")
 def reports_home(request: Request, db: Session = Depends(get_db)):
     user = require_user(request, db)
@@ -2606,7 +2606,7 @@ def calc_history(request: Request, db: Session = Depends(get_db)):
     )
 
 
-# 7 Администрирование (только admin)
+# Раздел 7. Администрирование (только администратор).
 @router.get("/admin")
 def admin_home(request: Request, db: Session = Depends(get_db)):
     user = require_admin(request, db)

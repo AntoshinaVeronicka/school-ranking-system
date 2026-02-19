@@ -1,9 +1,9 @@
--- Оптимизация поиска школ по вхождению строки (регистронезависимо, с нормализацией).
--- Выполнять под ролью, имеющей права на CREATE EXTENSION и CREATE INDEX.
+-- Оптимизация поиска школ по подстроке (регистронезависимо, с нормализацией).
+-- Выполнять под ролью с правами CREATE EXTENSION и CREATE INDEX.
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
--- Индекс под выражение из поиска:
+-- Индекс под выражение из поискового запроса:
 -- lower(replace(replace(regexp_replace(coalesce(full_name, ''), '\s+', ' ', 'g'), 'Ё', 'Е'), 'ё', 'е'))
 CREATE INDEX IF NOT EXISTS idx_school_full_name_norm_trgm
 ON edu.school
