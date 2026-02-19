@@ -1536,6 +1536,13 @@ def _to_int_or_none(value: object) -> int | None:
         return None
 
 
+def _round_to_int_or_none(value: object) -> int | None:
+    as_float = _to_float_or_none(value)
+    if as_float is None:
+        return None
+    return int(round(as_float))
+
+
 def _build_subject_analytics(ege_timeline: list[dict[str, object]]) -> dict[str, object]:
     return build_subject_analytics(ege_timeline)
 
@@ -2212,7 +2219,7 @@ def rating_export(
             "municipality_name": r.get("municipality_name"),
             "full_name": r.get("full_name"),
             "profile_names": r.get("profile_names"),
-            "avg_graduates": r.get("avg_graduates"),
+            "avg_graduates": _round_to_int_or_none(r.get("avg_graduates")),
             "avg_score_all": r.get("avg_score_all"),
             "ege_years": r.get("ege_years"),
             "last_year": r.get("last_year"),
@@ -2223,7 +2230,7 @@ def rating_export(
             "matched_programs": r.get("matched_programs"),
         }
         if show_potential_applicants:
-            row["potential_applicants_avg"] = r.get("potential_applicants_avg")
+            row["potential_applicants_avg"] = _round_to_int_or_none(r.get("potential_applicants_avg"))
         export_rows.append(row)
     df = pd.DataFrame(export_rows)
     if df.empty:

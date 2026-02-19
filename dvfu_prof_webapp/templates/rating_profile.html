@@ -349,13 +349,13 @@
                 <td>{{ r.municipality_name }}</td>
                 <td>{{ r.full_name }}</td>
                 <td>{{ r.profile_names if r.profile_names else "—" }}</td>
-                <td>{{ r.avg_graduates if r.avg_graduates is not none else "—" }}</td>
+                <td>{{ (r.avg_graduates | float | round(0, 'common') | int) if r.avg_graduates is not none else "—" }}</td>
                 <td>{{ r.avg_score_all if r.avg_score_all is not none else "—" }}</td>
                 {% if show_admission_subject_avg %}
                   <td>{{ r.admission_subject_avg if r.admission_subject_avg is not none else "—" }}</td>
                 {% endif %}
                 {% if show_potential_applicants %}
-                  <td>{{ r.potential_applicants_avg if r.potential_applicants_avg is not none else "—" }}</td>
+                  <td>{{ (r.potential_applicants_avg | float | round(0, 'common') | int) if r.potential_applicants_avg is not none else "—" }}</td>
                 {% endif %}
                 <td>{{ r.rating_score }}</td>
                 <td>
