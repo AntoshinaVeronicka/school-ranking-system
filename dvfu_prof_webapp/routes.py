@@ -43,6 +43,7 @@ try:
         UPLOAD_DIR,
     )
     from .db import ImportJob, User, get_db
+    from .filter_options_repo import clear_filter_options_cache
     from .rating_repo import (
         RatingFilters,
         RatingWeights,
@@ -109,6 +110,7 @@ except ImportError:
         UPLOAD_DIR,
     )
     from db import ImportJob, User, get_db
+    from filter_options_repo import clear_filter_options_cache
     from rating_repo import (
         RatingFilters,
         RatingWeights,
@@ -355,6 +357,8 @@ def import_ege_action(
             ensure_ascii=False,
         )
         db.commit()
+        if success and not is_dry_run:
+            clear_filter_options_cache()
 
         form_state["sheet"] = sheet_name
         form_state["year"] = str(year_value)
@@ -617,6 +621,8 @@ def directories_load_action(
             ensure_ascii=False,
         )
         db.commit()
+        if success and dry_run is None:
+            clear_filter_options_cache()
 
         form_state["sheet"] = sheet_name
 
@@ -809,6 +815,7 @@ async def directories_min_scores_action(request: Request, db: Session = Depends(
             ensure_ascii=False,
         )
         db.commit()
+        clear_filter_options_cache()
 
         return render(
             "directories_import.html",

@@ -22,7 +22,7 @@ try:
         fetch_institutes,
         fetch_program_filter_options,
     )
-    from .search_repo import _get_pg_config, normalize_search_text
+    from .search_repo import get_pg_connection, normalize_search_text
 except ImportError:
     from config import (
         DEFAULT_RATING_LIMIT,
@@ -38,7 +38,7 @@ except ImportError:
         fetch_institutes,
         fetch_program_filter_options,
     )
-    from search_repo import _get_pg_config, normalize_search_text
+    from search_repo import get_pg_connection, normalize_search_text
 
 
 _NORM_FULL_NAME_SQL = (
@@ -108,8 +108,7 @@ def fetch_rating_filter_options(
     region_id: int | None = None,
     institute_ids: tuple[int, ...] = (),
 ) -> dict[str, list[dict[str, Any]]]:
-    cfg = _get_pg_config()
-    with psycopg2.connect(**cfg) as conn:
+    with get_pg_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             options = fetch_common_filter_options(
                 cur,
@@ -122,8 +121,7 @@ def fetch_rating_filter_options(
 
 
 def fetch_programs(institute_ids: tuple[int, ...] = ()) -> list[dict[str, Any]]:
-    cfg = _get_pg_config()
-    with psycopg2.connect(**cfg) as conn:
+    with get_pg_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             rows = fetch_program_filter_options(cur, institute_ids=institute_ids)
 
@@ -151,8 +149,7 @@ def fetch_program_requirements(
         params.append(list(program_ids))
     where_sql = " AND ".join(where_parts)
 
-    cfg = _get_pg_config()
-    with psycopg2.connect(**cfg) as conn:
+    with get_pg_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 f"""
@@ -855,8 +852,7 @@ def calculate_school_rating(
         ]
     )
 
-    cfg = _get_pg_config()
-    with psycopg2.connect(**cfg) as conn:
+    with get_pg_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(sql, params)
             rows = [dict(r) for r in cur.fetchall()]

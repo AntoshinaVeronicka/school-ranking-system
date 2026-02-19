@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import os
 import re
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from psycopg2.pool import ThreadedConnectionPool
 
 try:
     from dotenv import load_dotenv
@@ -67,6 +70,71 @@ def _get_pg_config() -> dict[str, Any]:
         "user": user,
         "password": password,
     }
+
+_PG_POOL: ThreadedConnectionPool | None = None
+_PG_POOL_LOCK = threading.Lock()
+
+
+def _get_pool_bounds() -> tuple[int, int]:
+    raw_min = os.getenv("PG_POOL_MIN_SIZE", "1")
+    raw_max = os.getenv("PG_POOL_MAX_SIZE", "10")
+    try:
+        min_size = int(raw_min)
+    except ValueError:
+        min_size = 1
+    try:
+        max_size = int(raw_max)
+    except ValueError:
+        max_size = 10
+    min_size = max(1, min(min_size, 32))
+    max_size = max(min_size, min(max_size, 64))
+    return min_size, max_size
+
+
+def _get_pg_pool() -> ThreadedConnectionPool:
+    global _PG_POOL
+    pool = _PG_POOL
+    if pool is not None:
+        return pool
+
+    with _PG_POOL_LOCK:
+        pool = _PG_POOL
+        if pool is None:
+            min_size, max_size = _get_pool_bounds()
+            pool = ThreadedConnectionPool(minconn=min_size, maxconn=max_size, **_get_pg_config())
+            _PG_POOL = pool
+    return pool
+
+
+@contextmanager
+def get_pg_connection():
+    pool = _get_pg_pool()
+    conn = pool.getconn()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        pool.putconn(conn)
+
+
+def close_pg_pool() -> None:
+    global _PG_POOL
+    with _PG_POOL_LOCK:
+        pool = _PG_POOL
+        _PG_POOL = None
+    if pool is not None:
+        pool.closeall()
+
 
 
 def _build_school_filters(filters: SchoolSearchFilters) -> tuple[str, list[Any]]:
@@ -139,15 +207,13 @@ def _build_school_filters(filters: SchoolSearchFilters) -> tuple[str, list[Any]]
 
 
 def fetch_filter_options(region_id: int | None = None) -> dict[str, list[dict[str, Any]]]:
-    cfg = _get_pg_config()
-    with psycopg2.connect(**cfg) as conn:
+    with get_pg_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             return fetch_common_filter_options(cur, region_id=region_id, include_subject_min_score=False)
 
 
 def fetch_municipalities(region_id: int) -> list[dict[str, Any]]:
-    cfg = _get_pg_config()
-    with psycopg2.connect(**cfg) as conn:
+    with get_pg_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
@@ -175,8 +241,7 @@ def search_schools(
         JOIN edu.region r ON r.region_id = m.region_id
     """
 
-    cfg = _get_pg_config()
-    with psycopg2.connect(**cfg) as conn:
+    with get_pg_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             count_sql = f"SELECT COUNT(*) AS total {base_from} WHERE {where_sql}"
             cur.execute(count_sql, where_params)
@@ -249,8 +314,7 @@ def search_schools(
 
 
 def fetch_school_card(school_id: int) -> dict[str, Any] | None:
-    cfg = _get_pg_config()
-    with psycopg2.connect(**cfg) as conn:
+    with get_pg_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """

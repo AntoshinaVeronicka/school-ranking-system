@@ -15,7 +15,7 @@ try:
         DEFAULT_RATING_W_MATCH_SHARE,
         DEFAULT_RATING_W_THRESHOLD_SHARE,
     )
-    from .search_repo import _get_pg_config
+    from .search_repo import get_pg_connection
 except ImportError:
     from config import (
         DEFAULT_RATING_W_AVG_SCORE,
@@ -23,7 +23,7 @@ except ImportError:
         DEFAULT_RATING_W_MATCH_SHARE,
         DEFAULT_RATING_W_THRESHOLD_SHARE,
     )
-    from search_repo import _get_pg_config
+    from search_repo import get_pg_connection
 
 
 METRIC_CODES = (
@@ -311,7 +311,6 @@ def save_search_request(
     if not rows and total_rows <= 0:
         return None
 
-    cfg = _get_pg_config()
     year_basis = _guess_year_basis(filters, rows)
 
     notes = _make_notes(
@@ -325,7 +324,7 @@ def save_search_request(
         }
     )
 
-    with psycopg2.connect(**cfg) as conn:
+    with get_pg_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -379,7 +378,6 @@ def save_rating_run(
     if not ranked_rows:
         return None
 
-    cfg = _get_pg_config()
     year_basis = _guess_year_basis(filters, ranked_rows)
     min_students = _to_int(filters.get("min_graduates"))
     if min_students is not None and min_students < 0:
@@ -412,7 +410,7 @@ def save_rating_run(
         or _normalize_int_list(filters.get("program_ids"))
     )
 
-    with psycopg2.connect(**cfg) as conn:
+    with get_pg_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -663,8 +661,7 @@ def save_rating_run(
 
 def fetch_calc_history(limit: int = 200) -> list[dict[str, Any]]:
     safe_limit = max(1, min(int(limit), 1000))
-    cfg = _get_pg_config()
-    with psycopg2.connect(**cfg) as conn:
+    with get_pg_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
@@ -716,8 +713,7 @@ def fetch_calc_history(limit: int = 200) -> list[dict[str, Any]]:
 
 def fetch_rating_runs(limit: int = 200) -> list[dict[str, Any]]:
     safe_limit = max(1, min(int(limit), 1000))
-    cfg = _get_pg_config()
-    with psycopg2.connect(**cfg) as conn:
+    with get_pg_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
@@ -758,8 +754,7 @@ def fetch_rating_runs(limit: int = 200) -> list[dict[str, Any]]:
 
 def fetch_run_schools(run_id: int, limit: int = 2000) -> list[dict[str, Any]]:
     safe_limit = max(1, min(int(limit), 5000))
-    cfg = _get_pg_config()
-    with psycopg2.connect(**cfg) as conn:
+    with get_pg_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
@@ -802,8 +797,7 @@ def create_reports_for_run(
     if report_format_value not in VALID_REPORT_FORMATS:
         report_format_value = "json"
 
-    cfg = _get_pg_config()
-    with psycopg2.connect(**cfg) as conn:
+    with get_pg_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
@@ -951,8 +945,7 @@ def create_reports_for_run(
 
 def fetch_report_archive(limit: int = 300) -> list[dict[str, Any]]:
     safe_limit = max(1, min(int(limit), 2000))
-    cfg = _get_pg_config()
-    with psycopg2.connect(**cfg) as conn:
+    with get_pg_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
@@ -983,8 +976,7 @@ def fetch_report_archive(limit: int = 300) -> list[dict[str, Any]]:
 
 
 def get_report_payload(report_id: int) -> dict[str, Any] | None:
-    cfg = _get_pg_config()
-    with psycopg2.connect(**cfg) as conn:
+    with get_pg_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
@@ -1008,8 +1000,7 @@ def get_report_payload(report_id: int) -> dict[str, Any] | None:
 
 
 def fetch_run_export_data(run_id: int) -> dict[str, Any] | None:
-    cfg = _get_pg_config()
-    with psycopg2.connect(**cfg) as conn:
+    with get_pg_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
